@@ -1,0 +1,1642 @@
+#!/bin/sh
+
+BINDIR="/root/bin"
+FIRMWARE_NAME="esz7"
+
+LOG_FILE_SETUP="/var/log/${FIRMWARE_NAME}-setup.log"
+LOG_FILE_FWUPDATE="/var/log/${FIRMWARE_NAME}-update.log"
+LOG_FILE_MAX_SIZE=10240
+
+MODE="ATLAS"
+MODE_TITLE="ББИ АТЛАС"
+CFGNAME="atlas.cfg"
+STATUSNAME="atlas.sts"
+if [ -f ${BINDIR}/.APS ]; then
+    MODE="SIU"
+    MODE_TITLE="Sensors Interface Unit"
+    CFGNAME="siu.cfg"
+    STATUSNAME="siu.sts"
+fi
+
+CFGFILE="${BINDIR}/${CFGNAME}"
+STATUSFILE="${BINDIR}/${STATUSNAME}"
+
+get_uptime()
+{
+  UPTIME=$(awk '{
+    ts = int($1)
+    if (ts < 86400) {
+        printf "%02d:%02d:%02d", ts/3600, (ts%3600)/60, ts%60
+    } else if (int(ts/2592000) == 0) {
+        printf "%d дн %02d:%02d:%02d", (ts%2592000)/86400, ((ts%2592000)%86400)/3600, (((ts%2592000)%86400)%3600)/60, ((ts%2592000)%86400)%60
+    } else {
+        printf "%d мес %d дн %02d:%02d:%02d", ts/2592000, (ts%2592000)/86400, ((ts%2592000)%86400)/3600, (((ts%2592000)%86400)%3600)/60, ((ts%2592000)%86400)%60
+    }
+  }' /proc/uptime)
+}
+
+get_system_time()
+{
+    DATE=$(date "+%d.%m.%Y %H:%M:%S")
+    TIMEZONE=$(cat /etc/timezone 2>/dev/null || echo "UTC")
+    SYS_TIME="$DATE &nbsp;&nbsp; [$TIMEZONE]"
+}
+
+
+set_system_time()
+{
+    # запрос на синхронизацию времени
+    echo "Content-type: text/plain; charset=utf-8"
+    echo ""
+
+    touch ${LOG_FILE_SETUP}
+    tail -c ${LOG_FILE_MAX_SIZE} ${LOG_FILE_SETUP} > ${LOG_FILE_SETUP}.tmp
+    mv ${LOG_FILE_SETUP}.tmp ${LOG_FILE_SETUP} &>/dev/null
+
+    get_system_time
+    echo "${DATE}" >> ${LOG_FILE_SETUP}
+
+    # Очищаем от потенциально опасных символов (оставляем только цифры и точку)
+    RAW_TIME=$(echo "$QUERY_STRING" | sed 's/set_time=//')
+    CLEAN_TIME=$(echo "$RAW_TIME" | sed 's/[^0-9.]//g')
+    echo "CLEAN_TIME:   $CLEAN_TIME" >> /var/log/esz7-err.log
+
+    # Проверяем, что строка не пустая и соответствует базовой длине формата
+    if [ -n "$CLEAN_TIME" ] && [ ${#CLEAN_TIME} -ge 12 ]; then
+
+        if date -s "$CLEAN_TIME" > /dev/null 2>&1; then
+            echo "${DATE} SET DATE/TIME: $CLEAN_TIME" >> ${LOG_FILE_SETUP}
+            hwclock -w -u &>/dev/null
+            # Возвращаем новое время обратно
+            get_system_time
+            echo "$DATE<br>[$TIMEZONE]"
+        else
+            echo "${DATE} SET DATE/TIME TO '$CLEAN_TIME' FAILED" >> ${LOG_FILE_SETUP}
+            echo "ERR_SET_DATE_FAILED"
+        fi
+    else
+        echo "ERR_INVALID_FORMAT"
+    fi
+}
+
+api_get_setup()
+{
+    echo "Content-type: application/json"
+    echo ""
+    # Читается вывод /bin/setup/ и формируется JSON-строка
+    STR=$(setup)
+    IP=$(echo   "$STR" | grep "ip:"      | awk '{print $2}')
+    GW=$(echo   "$STR" | grep "gateway:" | awk '{print $2}')
+    MAC=$(echo  "$STR" | grep "mac:"     | awk '{print $2}')
+    SSH=$(echo  "$STR" | grep "ssh:"     | awk '{print $2}')
+    FTP=$(echo  "$STR" | grep "ftp:"     | awk '{print $2}')
+    HTTP=$(echo "$STR" | grep "http:"    | awk '{print $2}')
+    LANG=$(echo "$STR" | grep "lang:"    | awk '{print $2}')
+    SNO=$(echo  "$STR" | grep "serial:"  | awk '{print $2}')
+
+    echo "{\"ip\":\"$IP\",\"mac\":\"$MAC\",\"gateway\":\"$GW\",\"ssh\":\"$SSH\",\"ftp\":\"$FTP\",\"http\":\"$HTTP\",\"lang\":\"$LANG\",\"serial\":\"$SNO\"}"
+}
+
+api_save_setup()
+{
+    read -n $CONTENT_LENGTH POST_DATA
+
+    # Декодирование параметров (простая замена %XX символов, если требуется)
+    # и получение переменные ip, gw, mac, ssh, ftp, http, lang, sno
+    NEW_IP=$(echo   "$POST_DATA" | grep -oE 'ip=[^&]+'   | cut -d= -f2)
+    NEW_GW=$(echo   "$POST_DATA" | grep -oE 'gw=[^&]+'   | cut -d= -f2)
+    NEW_MAC=$(echo  "$POST_DATA" | grep -oE 'mac=[^&]+'  | cut -d= -f2 | sed 's/%3A/:/g') # замена url-encoded двоеточий
+    NEW_SSH=$(echo  "$POST_DATA" | grep -oE 'ssh=[^&]+'  | cut -d= -f2)
+    NEW_FTP=$(echo  "$POST_DATA" | grep -oE 'ftp=[^&]+'  | cut -d= -f2)
+    NEW_HTTP=$(echo "$POST_DATA" | grep -oE 'http=[^&]+' | cut -d= -f2)
+    NEW_LANG=$(echo "$POST_DATA" | grep -oE 'lang=[^&]+' | cut -d= -f2)
+    NEW_SNO=$(echo  "$POST_DATA" | grep -oE 'sno=[^&]+'  | cut -d= -f2)
+
+    # Последовательно вызываем утилиту setup для каждого параметра
+    setup \
+        --ip   "$NEW_IP"   \
+        --www \
+        --gw   "$NEW_GW"   \
+        --mac  "$NEW_MAC"  \
+        --ssh  "$NEW_SSH"  \
+        --ftp  "$NEW_FTP"  \
+        --http "$NEW_HTTP" \
+        --lang "$NEW_LANG" \
+        --sno  "$NEW_SNO" &>/dev/null
+}
+
+save_binary()
+{
+    BINFILE="$1"
+    TARGETFILE="$2"
+    BINFILE_SIZE=$(wc -c < $BINFILE)
+
+    # Ищем смещение первой пустой строки (конец заголовка)
+    # Переводим в десятичный вид
+    HEADER_SIZE=$(head -c 512 "$BINFILE" | hexdump -v -e '/1 "%02x "' | awk '{
+        idx = index($0, "0d 0a 0d 0a")
+        if (idx > 0) {
+            print (idx - 1) / 3 + 4
+            exit
+        }
+    }')
+
+
+    BOUNDARY="${CONTENT_TYPE#*boundary=}"
+    BOUNDARY_LEN=$(printf "%s" "$BOUNDARY" | wc -c)
+    TAIL_SIZE=$((BOUNDARY_LEN + 8))
+    FIRMWARE_SIZE=$((BINFILE_SIZE - HEADER_SIZE - TAIL_SIZE))
+    SKIP_LEN=$((HEADER_SIZE + 1))
+
+    printf "FILE:          %s\n"    "${BINFILE}"       >> ${LOG_FILE_FWUPDATE}
+    printf "SIZE:          %012d\n" "${BINFILE_SIZE}"  >> ${LOG_FILE_FWUPDATE}
+    printf "HEADER SIZE:   %012d\n" "${HEADER_SIZE}"   >> ${LOG_FILE_FWUPDATE}
+    printf "TAIL SIZE:     %012d\n" "${TAIL_SIZE}"     >> ${LOG_FILE_FWUPDATE}
+    printf "FIRMWARE SIZE: %012d\n" "${FIRMWARE_SIZE}" >> ${LOG_FILE_FWUPDATE}
+    printf "BOUNDARY:      %s\n"    "${BOUNDARY}"      >> ${LOG_FILE_FWUPDATE}
+
+    tail -c +"${SKIP_LEN}" "${BINFILE}" | head -c -"${TAIL_SIZE}" > "${TARGETFILE}"
+}
+
+#-----------------------------------------------------------
+# Main()
+#
+# 1. API РОУТЕР ДЛЯ AJAX
+# Этот блок обрабатывает фоновые запросы и сразу завершает скрипт через exit 0
+#
+
+if [ "$QUERY_STRING" == "api_get_status" ]; then
+    get_system_time
+    SYS_TIME="$DATE<br>[$TIMEZONE]"
+    get_uptime
+
+    SERIAL=$(cat /etc/serialno 2>/dev/null || echo "N/A")
+    SYSTEM=$(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d"=" -f 2 | sed s/\"//g || echo "Unknown")
+    OS=$(uname -a)
+    IPADR=$(ip addr show 2>/dev/null | awk '/inet / {print$2}' | cut -d '/' -f 1 | head -n 1)
+
+    STR=$(${BINDIR}/esz7-ctrl version 2>/dev/null)
+    ESZ7VER=$(echo "$STR" | cut -d'[' -f 1 | tr -d '\n')
+    [ -z "$ESZ7VER" ] && ESZ7VER="[no firmware]"
+
+    STATUS="STOP"
+    STR=$(${BINDIR}/esz7-ctrl status 2>/dev/null)
+    ESZ7=$(${BINDIR}/esz7-ctrl status 2>/dev/null | grep esz7 | head -n 1)
+    if echo ${STR} | grep esz7; then
+        STATUS="RUN"
+        TASKS=$(echo "$STR" | sed ':a;N;$!ba;s/\n/<br>/g')
+    fi
+
+    echo "Content-Type: text/plain; charset=UTF-8"
+    echo ""
+    echo "${MODE}|||${SYS_TIME}|||${UPTIME}|||${SERIAL}|||${IPADR}|||${ESZ7VER}|||${STATUS}|||${SYSTEM}|||${OS}|||${TASKS}|||${CFGNAME}"
+    exit 0
+
+elif echo "$QUERY_STRING" | grep -q "set_time"; then
+    set_system_time
+    exit 0
+
+elif [ "$QUERY_STRING" == "api_get_config_files" ]; then
+    echo "Content-Type: text/plain; charset=UTF-8"
+    echo ""
+    cat "${CFGFILE}" 2>/dev/null
+    echo "===CONTENT_SEPARATOR==="
+    cat "${STATUSFILE}" 2>/dev/null
+    exit 0
+
+elif [ "$QUERY_STRING" == "api_action_start" ]; then
+    if ! "$(${BINDIR}/esz7-ctrl status 2>/dev/null)" ; then
+        ${BINDIR}/esz7-ctrl start >/dev/null 2>&1
+    fi
+    echo "Content-Type: text/plain"
+    echo ""
+    echo "RUN"
+    exit 0
+
+elif [ "$QUERY_STRING" == "api_action_restart" ]; then
+    ${BINDIR}/esz7-ctrl restart >/dev/null 2>&1
+    echo "Content-Type: text/plain"
+    echo ""
+    echo "RESTART"
+    exit 0
+
+elif [ "$QUERY_STRING" == "api_action_stop" ]; then
+    ${BINDIR}/esz7-ctrl stop >/dev/null 2>&1
+    echo "Content-Type: text/plain"
+    echo ""
+    echo "STOP"
+    exit 0
+
+elif [ "$QUERY_STRING" == "api_action_reboot" ]; then
+    echo "Content-Type: text/plain"
+    echo ""
+    echo "REBOOTING"
+    (sleep 1; reboot) &
+    exit 0
+
+elif [ "$QUERY_STRING" == "api_save_config" ]; then
+    if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ]; then
+        POST_DATA=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+    fi
+
+    # Переводим POST_DATA в привычный DECODED_DATA
+    DECODED_DATA=$(printf '%b' "$(echo "$POST_DATA" | sed 's/%/\\x/g')")
+echo "DECODED_DATA: $DECODED_DATA" > /tmp/x.log
+    # основные поля (NL - с новой строки выводить поле)
+    if [ "$MODE" == "ATLAS" ]; then
+        FIELDS="host1 port11 port12 NL host2 port21 port22 NL host3 port31 port32 NL channels"
+    else
+        FIELDS="ads_cmd_port ads_data_port NL ss_cmd_port ss_dats_port NL dtr_cmd_port dtr_data_port NL wits_port NL channels NL SystemUnits Decimal"
+    fi
+
+    # Временные файлы для сборки
+    head="${CFGFILE}.head"
+    body="${CFGFILE}.body"
+    tail="${CFGFILE}.tail"
+    all_params="${CFGFILE}.params"
+
+    # разделение на части (head и tail)
+    awk '/^#/ && !done { print; next } { done=1 }' "${CFGFILE}" > "${head}"
+    awk '/DO NOT EDIT/ { done=1 } done { print }'  "${CFGFILE}" > "${tail}"
+
+    # извлечение всех активных параметров из исходного body
+    head_lines=$(wc -l < "${head}")
+    awk -v skip="${head_lines}" '
+        NR <= skip { next }
+        /DO NOT EDIT/ { exit }
+        /^[[:space:]]*#/ { next } 
+        NF == 0 { next }
+        {
+            idx = index($0, "=")
+            if (idx > 0) {
+                key = substr($0, 1, idx - 1)
+                rest = substr($0, idx + 1)
+                gsub(/^[ \t]+|[ \t]+$/, "", key)
+                gsub(/^[ \t]+/, "", rest)
+                print key "=" rest
+            }
+        }' "${CFGFILE}" > "${all_params}"
+
+    # сборка нового переупорядоченного body
+    # сначала выдергиваем поля из списка FIELDS в строгом порядке
+    > "${body}"
+    for field in $FIELDS; do
+        [ "$field" == "NL" ] && echo "" >> "${body}" && continue;
+        line=$(grep "^${field}=" "${all_params}")
+        if [ -n "$line" ]; then
+            echo "$line" >> "${body}"
+        else
+            echo "${field}=" >> "${body}"
+        fi
+    done
+
+    # Добавляем остальные поля, которых НЕ БЫЛО в списке FIELDS
+    echo -e "\n#---\n" >> "${body}"
+    while read -r line; do
+        [ -z "$line" ] && continue
+        case "$line" in
+            \#*|"") continue ;;
+        esac
+
+        key="${line%%=*}"
+        is_main=0
+        for main_field in $FIELDS; do
+            if [ "$key" = "$main_field" ]; then
+                is_main=1
+                break
+            fi
+        done
+
+        if [ $is_main -eq 0 ]; then
+            echo "$line" >> "${body}"
+        fi
+    done < "${all_params}"
+
+    # обновление body из данных html-формы (decoded_data)
+    echo "$DECODED_DATA" | tr '&' '\n' | while read -r pair; do
+        [ -z "$pair" ] && continue
+        key="${pair%%=*}"
+        value="${pair#*=}"
+
+        [ -z "$key" ] && continue
+        [ "$key" = "action" ] && continue
+
+        # декодирование %2C в запятую для поля channels в DECODED_DATA
+        if [ "$key" = "channels" ]; then
+            value=$(echo "$value" | sed 's/%2[cC]/,/g')
+        elif [ "$key" = "proto_ver" ]; then
+            if [ -z "$value" ]; then
+                value="1"
+            fi
+        fi
+
+        if grep -q "^${key}=" "${body}"; then
+            if grep "^${key}=" "${body}" | grep -q "#"; then
+                sed "s|^\(${key}=\)[^#]*\(.*\)|\1${value}\2|" "${body}" > "${body}.tmp"
+            else
+                sed "s|^\(${key}=\).*|\1${value}|" "${body}" > "${body}.tmp"
+            fi
+            mv "${body}.tmp" "${body}"
+        else
+            # Если поля нет в body, но это валидный параметр — дописываем
+            # Для SIU проверяем, относится ли поле к конфигурации (исключаем технические переменные формы)
+            if [ "$MODE" == "ATLAS" ]; then
+                case "$key" in
+                    host1|port11|port12|host2|port21|port22|host3|port31|port32|channels|proto_ver)
+                        echo "${key}=${value}" >> "${body}" ;;
+                esac
+            else
+                case "$key" in
+                    ads_cmd_port|ads_data_port|ss_cmd_port|ss_dats_port|dtr_cmd_port|dtr_data_port|wits_port|SystemUnits|Decimal|channels)
+                        echo "${key}=${value}" >> "${body}" ;;
+                esac
+            fi
+        fi
+    done
+
+    # выравнивание комментариев (24 символа)
+    awk -F= '
+        NF == 0 || $0 == "" { print ""; next }
+        /^[[:space:]]*#/ { print; next }
+        {
+            if (NF < 2) { print; next }
+            idx = index($0, "#")
+            if (idx > 0) {
+                rest = substr($0, idx)
+                idx_in_val = index($2, "#")
+                val = substr($2, 1, idx_in_val - 1)
+                rest = "        " rest
+            } else {
+                val = $2
+                rest = ""
+            }
+            gsub(/^[ \t]+|[ \t]+$/, "", val)
+            gsub(/^[ \t]+|[ \t]+$/, "", $1)
+            left = $1 "=" val
+            if (length(left) < 24) {
+                printf "%-24s%s\n", left, rest
+            } else {
+                print left rest
+            }
+        }' "${body}" > "${body}.clean"
+    mv "${body}.clean" "${body}"
+
+    # сборка итогового файла и обновление даты 
+    cat "${head}" "${body}" > "${CFGFILE}.new"
+    echo "" >> "${CFGFILE}.new"
+    cat "${tail}" >> "${CFGFILE}.new"
+
+    current_date=$(date "+%c")
+
+    awk -v d="# Updated: ${current_date}" '
+    NR==1 {
+        if ($0 ~ /^# *Updated:/) { print d; next } 
+        else { print d; print $0; next }
+    } 
+    {print}' "${CFGFILE}.new" > "${CFGFILE}"
+
+
+    # удаление временных файлов
+    rm -f "${head}" "${body}" "${tail}" "${all_params}" "${CFGFILE}.new"
+
+    # Отдаем браузеру SUCCESS в формате plain-text для AJAX
+    echo "Content-Type: text/plain"
+    echo ""
+    echo "SUCCESS"
+    exit 0
+
+elif [ "$QUERY_STRING" == "_api_save_config" ]; then
+    if [ -n "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ]; then
+        POST_DATA=$(dd bs=1 count="$CONTENT_LENGTH" 2>/dev/null)
+    fi
+
+    get_param() {
+        echo "$POST_DATA"   | \
+            tr '&' '\n'     | \
+            grep "^$1="     | \
+            cut -d'=' -f2   | \
+            sed 's/+/ /g; s/%2[cC]/,/g; s/%\([0-9A-F][0-9A-F]\)/\\x\1/g' | \
+            xargs echo -e 2>/dev/null
+    }
+
+    update_cfg_param() {
+        Key="$1"
+        Val="$2"
+        if grep -q "^[[:space:]]*$Key=" "$CFGFILE"; then
+            sed -i "s|^[[:space:]]*$Key=.*|$Key=$Val|" "$CFGFILE"
+        else
+            echo "$Key=$Val" >> "$CFGFILE"
+        fi
+    }
+
+    if [ "$MODE" == "ATLAS" ]; then
+        update_cfg_param "host1"         "$(get_param host1)"
+        update_cfg_param "port11"        "$(get_param port11)"
+        update_cfg_param "port12"        "$(get_param port12)"
+        update_cfg_param "host2"         "$(get_param host2)"
+        update_cfg_param "port21"        "$(get_param port21)"
+        update_cfg_param "port22"        "$(get_param port22)"
+        update_cfg_param "host3"         "$(get_param host3)"
+        update_cfg_param "port31"        "$(get_param port31)"
+        update_cfg_param "port32"        "$(get_param port32)"
+        update_cfg_param "proto_ver"     "$(get_param proto_ver)"
+        update_cfg_param "channels"      "$(get_param channels)"
+    else
+        update_cfg_param "ads_cmd_port"  "$(get_param ads_cmd_port)"
+        update_cfg_param "ads_data_port" "$(get_param ads_data_port)"
+        update_cfg_param "ss_cmd_port"   "$(get_param ss_cmd_port)"
+        update_cfg_param "ss_dats_port"  "$(get_param ss_dats_port)"
+        update_cfg_param "dtr_cmd_port"  "$(get_param dtr_cmd_port)"
+        update_cfg_param "dtr_data_port" "$(get_param dtr_data_port)"
+        update_cfg_param "wits_port"     "$(get_param wits_port)"
+        update_cfg_param "SystemUnits"   "$(get_param SystemUnits)"
+        update_cfg_param "Decimal"       "$(get_param Decimal)"
+        update_cfg_param "channels"      "$(get_param channels)"
+    fi
+    
+    echo "Content-Type: text/plain"
+    echo ""
+    echo "SUCCESS"
+    exit 0
+
+elif [ "$QUERY_STRING" = "api_get_setup" ]; then
+    api_get_setup
+    exit 0
+
+elif [ "$QUERY_STRING" = "api_save_setup" ]; then
+    api_save_setup
+    echo "Content-type: text/plain"
+    echo ""
+    echo "SUCCESS"
+    exit 0
+
+elif [ "$QUERY_STRING" = "action=check_app_status" ]; then
+    echo "Content-type: text/plain; charset=utf-8"
+    echo ""
+    STR=$(${BINDIR}/esz7-ctrl status 2>/dev/null)
+    if [ ! -z "$STR" ]; then
+        echo "RUNNING"
+    else
+        echo "STOPPED"
+    fi
+    exit 0
+
+elif echo "$QUERY_STRING" | grep -q "action=uploadfw"; then
+    echo "Content-type: text/plain; charset=utf-8"
+    echo ""
+
+    touch ${LOG_FILE_FWUPDATE}
+    tail -c ${LOG_FILE_MAX_SIZE} ${LOG_FILE_FWUPDATE} >> "${LOG_FILE_FWUPDATE}.tmp"
+    mv ${LOG_FILE_FWUPDATE}.tmp ${LOG_FILE_FWUPDATE} &>/dev/null
+    get_system_time
+    echo "${DATE}" >> ${LOG_FILE_FWUPDATE}
+
+    # проверка остановки текущего процесса
+    STR=$(${BINDIR}/esz7-ctrl status 2>/dev/null)
+    if [ ! -z "$STR" ]; then
+        echo "ERR_APP_NOT_STOP"
+        exit 0
+    fi
+
+    RAW_HASH=$(echo "$QUERY_STRING" | sed -n 's/.*expected_hash=\([^&]*\).*/\1/p')
+    EXPECTED_HASH=$(echo "$RAW_HASH" | tr 'A-Z' 'a-z' | sed 's/[^a-f0-9]//g')
+    if [ ${#EXPECTED_HASH} -ne 64 ]; then
+        echo "ERR_BAD_EXPECTED_HASH"
+        exit 0
+    fi
+
+
+    STASHDIR="${BINDIR}/fw"
+    mkdir -p ${STASHDIR}
+
+    RAWFILE="${STASHDIR}/${FIRMWARE_NAME}.raw"      # Временный файл
+    FIRMWARE="${BINDIR}/${FIRMWARE_NAME}"           # Файл текущей прошивки
+    FIRMWARE_NEW="${STASHDIR}/${FIRMWARE_NAME}-new" # Файл новой прошивки
+
+    # Читаем бинарное тело POST-запроса заданной длины из стандартного ввода (stdin)
+    if [ ! -z "$CONTENT_LENGTH" ] && [ "$CONTENT_LENGTH" -gt 0 ]; then
+        head -c "$CONTENT_LENGTH" > "${RAWFILE}"
+    else
+        echo "ERR_EMPTY_CONTENT"
+        exit 0
+    fi
+
+    # CONTENT_TYPE is expecting
+    echo "CONTENT_LENGTH: $CONTENT_LENGTH" >> ${LOG_FILE_FWUPDATE}
+    save_binary ${RAWFILE} ${FIRMWARE_NEW}
+
+    rm -f "$RAWFILE"
+
+    if [ ! -f "$FIRMWARE_NEW" ]; then
+        rm -f "$RAWFILE"
+        echo "ERROR: \"$FIRMWARE_NEW\" NOT SAVED" >> ${LOG_FILE_FWUPDATE}
+        echo "ERR_FILE_NOT_SAVED"
+        exit 0
+    fi
+
+    CALCULATED_HASH=$(sha256sum -b "$FIRMWARE_NEW" | awk '{print $1}')
+    echo "HASH:          $CALCULATED_HASH" >> ${LOG_FILE_FWUPDATE}
+    echo "EXPECTED HASH: $EXPECTED_HASH"   >> ${LOG_FILE_FWUPDATE}
+
+    if [ "$CALCULATED_HASH" = "$EXPECTED_HASH" ]; then
+        echo "HASH OK" >> ${LOG_FILE_FWUPDATE}
+
+        # сохранение предыдущей версии
+        if [ -f "${FIRMWARE}" ]; then
+            DATE=$(date "+%Y%m%d-%H%M%S")
+            echo -n "BACKUP:        " >> ${LOG_FILE_FWUPDATE}
+            cp -fv "${FIRMWARE}" "${FIRMWARE}-${DATE}" >> ${LOG_FILE_FWUPDATE} 2>&1
+            if [ "$?" -ne 0 ]; then
+                echo -e "BACKUP FAILED\nCANCEL" >> ${LOG_FILE_FWUPDATE}
+                echo "" >> ${LOG_FILE_FWUPDATE}
+                echo "ERR_BACKUP_FAILED"
+                exit 0
+            fi
+        fi
+
+        # замена текущей прошивки
+        echo -n "UDPATE:        " >> ${LOG_FILE_FWUPDATE}
+        cp -fv "${FIRMWARE_NEW}" "${FIRMWARE}" >> ${LOG_FILE_FWUPDATE} 2>&1
+        if [ "$?" -ne 0 ]; then
+            echo "UPDATE FAILED" >> ${LOG_FILE_FWUPDATE}
+            echo "" >> ${LOG_FILE_FWUPDATE}
+            echo "ERR_UPDATE_FAILED"
+            exit 0
+        fi
+
+        echo -n "SET EXEC BIT   " >> ${LOG_FILE_FWUPDATE}
+        chmod -v 500 "${FIRMWARE}" >> ${LOG_FILE_FWUPDATE}
+        echo "" >> ${LOG_FILE_FWUPDATE}
+        echo "SUCCESS"
+        exit 0
+    fi
+
+    echo "HASH MISMATCHED - UPDATE CANCELED" >> ${LOG_FILE_FWUPDATE}
+    echo "" >> ${LOG_FILE_FWUPDATE}
+
+    rm -f "$FIRMWARE_NEW"
+    echo "ERR_HASH_MISMATCH"
+    exit 0
+fi
+
+
+# 2. Сюда попадаем, если query_string не совпало ни с одним api - генерирует html
+echo "Content-Type: text/html; charset=UTF-8"
+echo ""
+
+# 3.1 - заголовок, стили и компактное меню
+
+cat << EOF
+<!DOCTYPE html>
+
+<html>
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>${MODE_TITLE}</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <script src="/sha256.min.js"></script>
+
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #fff; color: #333; }
+    .container { display: flex; gap: 30px; }
+    .sidebar { width: 160px; border-right: 1px solid #eee; padding-right: 10px; flex-shrink: 0; }
+    .sidebar a { display: block; padding: 10px 12px; color: #007bff; text-decoration: none; margin-bottom: 6px; border-radius: 4px; }
+    .sidebar a:hover, .sidebar a.active { background-color: #f0f7ff; font-weight: bold; }
+    .main-content { flex: 1; min-width: 0; }
+    .value-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .value-label { font-weight: bold; width: 150px; color: #333; flex-shrink: 0; }
+    .value-display { background: #f4f4f4; padding: 6px 10px; border-radius: 4px; min-width: 200px; border: 1px solid #e1e1e1; }
+    .value-display-bold { font-weight: bold; padding: 6px 12px; background: #e2f0d9; border-radius: 4px; border: 1px solid #c3e6cb; min-width: 65px; text-align: center; display: inline-block; }
+    .value-display-pre { font-family: monospace; background: #fafafa; padding: 12px; border: 1px solid #ddd; border-radius: 4px; width: 100%; white-space: pre-wrap; overflow-x: auto; box-sizing: border-box; }
+    .flow-message { position: fixed; top: 20px; right: 20px; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 15px 25px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 9999; display: none; font-family: sans-serif; font-weight: bold; }
+    .config-container { display: flex; gap: 15px; align-items: flex-start; }
+    .display-config { flex: 1; border: 1px solid #ccc; padding: 12px; border-radius: 6px; background: #f9f9f9; min-width: 0; }
+    .display-config h3 { margin-top: 0; margin-bottom: 10px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+    .display-config pre { margin: 0; white-space: pre-wrap; font-family: monospace; overflow-x: auto; }
+    .table-setup { width: 100%; max-width: 600px; border-collapse: collapse; border: 1px solid #dee2e6; border-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); margin-top: 10px; }
+    .table-setup tr:not(:last-child) { border-bottom: 5px 1px solid #dee2e6 !important; }
+    .table-setup td:first-child { padding: 5px 10px !important; width: 150px; color: #495057; }
+    .table-setup td:last-child  { padding: 5px 10px !important; font-weight: bold; }
+    .table-setup tr:hover { background-color: #f8f9fa; }
+    .time-container { display: flex; align-items: center; gap: 10px; width: 100%; }
+    .sync-btn { margin-left: 15px; padding: 5px 12px; font-size: 13px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; white-space: nowrap; }
+    .sync-btn:hover { background-color: #0056b3; }
+    .sync-btn:disabled { background-color: #cccccc; cursor: not-allowed; }
+    .button { width: 140px; background: #007bff; color: white; border: 1px solid #0069d9; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1.0em; }
+    .button:hover { background: #0069d9; }
+    .button-stop { background: #0069d9; border-color: #bd2130; }
+    .button-stop:hover { background: #dc3545; }
+    .button-reboot { background: #ffc107; border-color: #e0a800; color: #000; }
+    .button-reboot:hover { background: #dc3545; color: #fff; }
+    .btn-save { height: 26px !important; font-size: 0.8em !important; line-height: 0.9em !important; box-sizing: border-box !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; font-weight: bold !important; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: #fff; animation: webSpinnerRotate 0.8s linear infinite; margin-right: 8px; flex-shrink: 0; }
+    @keyframes webSpinnerRotate { to { transform: rotate(360deg); } }
+
+    .animated-logo { display: inline-block; vertical-align: middle; opacity: 0; transform: translateY(-20px); animation: webLogoFlyIn 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; animation-delay: 0.2s; }
+    @keyframes webLogoFlyIn { to { opacity: 1; transform: translateY(0); }}
+
+    .btn-uploading { background-color: #ff9800 !important; color: white !important; cursor: not-allowed !important; animation: pulse-orange 1.5s infinite ease-in-out; }
+    @keyframes pulse-orange {
+        0% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 152, 0, 0.7); }
+       50% { opacity: 0.6; box-shadow: 0 0 0 10px rgba(255, 152, 0, 0); }
+      100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 152, 0, 0); }
+    }
+
+    #message-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+    .custom-message { min-width: 280px; max-width: 350px; padding: 12px 20px; border-radius: 6px; color: #ffffff; font-family: sans-serif; font-size: 14px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); display: flex; justify-content: space-between; align-items: center; opacity: 0; transform: translateY(-20px); transition: opacity 0.3s ease, transform 0.3s ease; }
+    .custom-message.info    { background-color: #17a2b8; }
+    .custom-message.success { background-color: #28a745; }
+    .custom-message.error   { background-color: #dc3545; }
+    .custom-message.show { opacity: 1; transform: translateY(0); }
+    .custom-message-close { margin-left: 15px; cursor: pointer; font-weight: bold; opacity: 0.7;}
+    .custom-message-close:hover { opacity: 1;}
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      height: 24px;
+      transform: scale(0.8);
+      transform-origin: right center;
+      cursor: pointer;
+    }
+    @-moz-document url-prefix() {
+      input[type="number"] {
+        -moz-appearance: textfield;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<!--
+<div id="message" class="flow-message"></div>
+<div id="message_action" class="flow-message" style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba;">Действие выполняется...</div>
+<div id="message_setup" class="flow-message">Системные настройки обновлены</div>
+-->
+<div id="message-container"></div>
+
+<div style=" display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 25px; border-bottom: 2px solid #333; padding-bottom: 12px;">
+<div style="display: flex; align-items: center; gap: 15px;">
+  <a href="control" class="animated-logo" style="text-decoration: none; line-height: 0;">
+      <picture id="wb_Picture1">
+          <img src="../../logo-64.png" id="Picture1" alt="Logo" width="64" height="64" style="border-radius: 4px; display: block;">
+      </picture>
+  </a>
+  <div style="display: flex; flex-direction: column; gap: 4px;">
+      <span style="font-size: 1.6em; font-weight: bold; color: #212529; line-height: 1.2;">${MODE_TITLE}</span>
+      <span id="system_date" style="font-size: 0.95em; color: #1a73e8; font-weight: bold; letter-spacing: 0.5px;"> --:--:-- </span>
+  </div>
+  </div>
+    <div style="font-size: 1.1em; font-weight: 500; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; padding-bottom: 2px;">
+        Web Control Panel
+    </div>
+</div>
+
+<div class='container'>
+
+  <!-- Меню навигации (слева) -->
+  <div class='sidebar'>
+    <a href="#" id="menu_status" onclick="switchView('status')" class="active">Статус системы</a>
+    <a href="#" id="menu_config" onclick="switchView('config')">Конфигурация</a>
+    <a href="#" id="menu_setup" onclick="switchView('setup')">Системные настройки</a>
+  </div>
+
+  <!-- Контентные страницы -->
+  <div class='main-content'>
+
+    <!-- Страница 1: СТАТУС СИСТЕМЫ -->
+    <div id="view_status" class="page-view">
+      <div class='panel-title' style='text-align: left; margin-bottom: 15px;'><h2>Статус</h2></div>
+
+      <div class='value-row'><div class='value-label'>Серийный Номер</div><div class='value-display' id='lbl_serial'>...</div></div>
+      <div class='value-row'><div class='value-label'>Версия</div><div class='value-display' id='lbl_app'>...</div></div>
+
+      <div class='value-row' style="margin-top: 20px; margin-bottom: 20px;">
+        <div class='value-label'>Статус</div>
+        <div class='value-display-bold' id='lbl_status' style="width:100px; margin-right: 15px; background-color: #f8d7da; color: #721c24; border-color: #f5c6cb;">WAIT</div>
+        <button class='button' id='btn_start_restart' onclick="triggerAction('api_action_start')">Запустить</button>
+        <button class='button button-stop' onclick="triggerAction('api_action_stop')">Остановить</button>
+      </div>
+
+      <div class='value-row'>
+        <div class='value-label'>Время</div>
+        <div class='value-display' id='lbl_time'>...</div>
+        <button class='sync-btn' onclick='syncTime(this)'>Синхронизировать</button>
+      </div>
+ 
+      <div class='value-row'>
+        <div class='value-label'>Время непрерывной работы</div>
+        <div class='value-display' id='lbl_uptime'>...</div>
+      </div>
+
+      <div class='value-row'><div class='value-label'>Система</div><div class='value-display' id='lbl_system'>...</div></div>
+      <div class='value-row'><div class='value-label'>IP</div><div class='value-display' id='lbl_ip'>...</div></div>
+      <div class='value-row'><div class='value-label'>OS</div><div class='value-display' id='lbl_os'>...</div></div>
+
+      <div style="margin-top: 20px;">
+        <div class='value-label' style="width: 100%; margin-bottom: 8px;">Tasks</div>
+        <div class='value-display-pre' id='lbl_tasks'>...</div>
+      </div>
+    </div>
+    <!-- Страница 1: end of СТАТУС СИСТЕМЫ id=view_status -->
+
+    <!-- Страница 2: ВКЛАДКА КОНФИГУРАЦИИ -->
+    <div id="view_config" class="page-view" style="display: none;">
+
+      <!-- Страница 2.1 ПРОСМОТР КОНФИГ. ФАЙЛА -->
+      <div id="sub_config_show">
+        <div class='panel-title' style='display: flex; align-items: baseline; gap: 10px; text-align: left;'>
+          <h2 style='margin: 0;'>Конфигурация</h2>
+          <a href="#" onclick="toggleConfigMode('edit')" style='text-decoration: none; color: #007bff;'>(изменить)</a>
+        </div>
+        <br>
+        <div class='config-container'>
+          <div class='display-config' style="flex: 7;">
+            <h3 id="lbl_cfg_name">Загрузка...</h3>
+            <pre id="file_config">Загрузка файла конфигурации...</pre>
+          </div>
+          <div class='display-config' style="flex: 3;">
+            <h3>${STATUSNAME}</h3>
+            <pre id="file_status">Загрузка файла статуса...</pre>
+          </div>
+        </div>
+      </div>
+      <!-- Страница 2.1 end of ПРОСМОТР КОНФИГ. ФАЙЛА id=sub_config_show -->
+
+      <!-- Страница 2.2: ФОРМА РЕДАКТИРОВАНИЯ КОНФИГУРАЦИИ -->
+      <div id="sub_config_edit" style="display: none;">
+        <div class='panel-title' style='display: flex; align-items: baseline; gap: 10px; text-align: left; margin-bottom: 15px;'>
+          <h2 style='margin: 0;'>Конфигурация</h2>
+          <a href="#" onclick="toggleConfigMode('show')" style='text-decoration: none; color: #007bff;'>(файл)</a>
+        </div>
+
+        <div style='border: 1px solid #ccc; padding: 20px; border-radius: 6px; background-color: #f9f9f9; max-width: 680px;'>
+
+          <!-- ФОРМА РЕДАКТИРОВАНИЯ ПАРАМЕТРОВ АТЛАС -->
+          <form id="configFormAtlas" onsubmit="saveConfig(event)" style='margin: 0;'>
+           <div style='display: grid; grid-template-columns: 120px 210px 1fr; gap: 6px 15px; align-items: center;'>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Адрес назначения #1</label>
+             <input type='text' id='input_host1' name='host1' placeholder='xxx.xxx.xxx.xxx' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>IP-адрес устройства для отправки данных</span>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Порт 1 <span style='font-weight: normal;'>(16000)</span></label>
+             <input type='text' id='input_port11' name='port11' placeholder='16000' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Порт передачи данных по UDP</span>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Порт 2 <span style='font-weight: normal;'>(16000)</span></label>
+             <input type='text' id='input_port12' name='port12' placeholder='16001' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Порт передачи данных по UDP</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Адрес назначения #2</label>
+             <input type='text' id='input_host2' name='host2' placeholder='xxx.xxx.xxx.xxx' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>IP-адрес второго устройства</span>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Порт 1 <span style='font-weight: normal;'>(16001)</span></label>
+             <input type='text' id='input_port21' name='port21' placeholder='16000' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Дополнительный порт передачи данных</span>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Порт 2 <span style='font-weight: normal;'>(16001)</span></label>
+             <input type='text' id='input_port22' name='port22' placeholder='16001' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Дополнительный порт передачи данных</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Адрес назначения #3</label>
+             <input type='text' id='input_host3' name='host3' placeholder='xxx.xxx.xxx.xxx' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>IP-адрес третьего устройства</span>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Порт 1 <span style='font-weight: normal;'>(16001)</span></label>
+             <input type='text' id='input_port31' name='port31' placeholder='16000' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Дополнительный порт передачи данных</span>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Порт 2 <span style='font-weight: normal;'>(16001)</span></label>
+             <input type='text' id='input_port32' name='port32' placeholder='16001' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Дополнительный порт передачи данных</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size:0.9em;'>Протокол [0..1]</label>
+             <select id='input_proto_ver' name='proto_ver' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+               <option value="0">ver: 0 [один датчик давления, вес]</option>
+               <option value="1" selected>ver: 1 [два датчика давления, вес]</option>
+             </select>
+             <span style='color: #666; font-size:0.9em;'>Версия протокола передачи данных</span>
+ 
+             <label style='font-weight: bold; font-size:0.9em;'>Каналы <span style='font-weight: normal;'>[1..4]</span></label>
+             <input type='text' id='input_channels' name='channels' placeholder='1,2,3' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;' oninput="this.value = this.value.replace(/[^0-9,]/g, '');">
+             <span style='color: #666; font-size:0.9em;'>Список каналов для оцифровки</span>
+           </div>
+ 
+           <div style='display: flex; gap: 10px; margin-top: 15px; border-top: 1px solid #ccc; padding-top: 12px; padding-left: 135px;'>
+             <button type='button' id="btn_setup_cancel" class='btn-save btn-secondary' onclick='loadAndParseConfigToInputs()' style="background-color: #6c757d; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Отмена </button>
+             <button type='submit' id="btn_setup_submit" class='btn-save btn-success' style="background-color: #28a745; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Сохранить изменения </button>
+           </div>
+          </form>
+
+          <!-- ФОРМА РЕДАКТИРОВАНИЯ ПАРАМЕТРОВ SIU -->
+          <form id="configFormSIU" onsubmit="saveConfig(event)" style='margin: 0; display: none;'>
+           <div style='display: grid; grid-template-columns: 140px 140px 1fr; gap: 6px 15px; align-items: center;'>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>ADS Command Port</label>
+             <input type='text' id='input_ads_cmd_port' name='ads_cmd_port' placeholder='8220' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Командный порт ADS (TCP/IP)</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>ADS Data Port</label>
+             <input type='text' id='input_ads_data_port' name='ads_data_port' placeholder='8110' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Порт данных ADS (TCP/IP)</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>SureShot Command Port</label>
+             <input type='text' id='input_ss_cmd_port' name='ss_cmd_port' placeholder='7111' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Командный порт SureShot</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>SureShot Data Port</label>
+             <input type='text' id='input_ss_dats_port' name='ss_dats_port' placeholder='8111' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Порт данных SureShot</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>Depth Tracker Command Port</label>
+             <input type='text' id='input_dtr_cmd_port' name='dtr_cmd_port' placeholder='7110' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Командный порт Depth Tracker</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>Depth Tracker Data Port</label>
+             <input type='text' id='input_dtr_data_port' name='dtr_data_port' placeholder='8210' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Порт данных Depth Tracker</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>WITS Network Port</label>
+             <input type='text' id='input_wits_port' name='wits_port' placeholder='5005' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+             <span style='color: #666; font-size:0.9em;'>Сетевой порт WITS</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>System Units</label>
+             <select id='input_SystemUnits' name='SystemUnits' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+               <option value="M">M (Metric)</option>
+               <option value="E" selected>E (English)</option>
+             </select>
+             <span style='color: #444; font-size:0.9em;'>Метрическая (M) или Английская (E) система</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>Decimal Delimiter</label>
+             <select id='input_Decimal' name='Decimal' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+               <option value="dot" selected>dot (.) Точка</option>
+               <option value="comma">comma (,) Запятая</option>
+             </select>
+             <span style='color: #444; font-size:0.9em;'>Разделитель десятичных знаков</span>
+ 
+             <label style='font-weight: bold; font-size: 0.9em;'>Каналы <span style='font-weight: normal; font-size: 0.9em;'>[1..4]</span></label>
+             <input type='text' id='input_channels' name='channels' style='font-size:0.9em; padding: 4px 10px; border: 1px solid #ccc; border-radius: 4px;'">
+             <span style='color: #666; font-size:0.9em;'>Список каналов для оцифровки</span>
+           </div>
+           <div style='display: flex; gap: 10px; margin-top: 15px; border-top: 1px solid #ccc; padding-top: 12px; padding-left: 135px;'>
+             <button type='button' id="btn_setup_cancel" class='btn-save btn-secondary' onclick='loadAndParseConfigToInputs()' style="background-color: #6c757d; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Отмена </button>
+             <button type='submit' id="btn_setup_submit" class='btn-save btn-success' style="background-color: #28a745; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Сохранить изменения </button>
+           </div>
+          </form>
+        </div> 
+      </div>
+      <!-- СТРАНИЦА 2.2: end of ФОРМА РЕДАКТИРОВАНИЯ КОНФИГУРАЦИИ id=sub_config_edit -->
+    </div>
+    <!-- Страница 2: end of ВКЛАДКА КОНФИГУРАЦИИ id=view_config -->
+
+    <!-- Страница 3: НАСТРОЙКИ СИСТЕМЫ -->
+    <div id="view_setup" class="page-view" style="display: none; padding: 20px;">
+
+        <!-- Шапка с кнопками управления -->
+        <div class='panel-title' style="display: flex; align-items: baseline; gap: 10px; text-align: left; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Системные настройки</h2>
+        </div>
+
+        <!-- Страница 3.1 РЕЖИМ ПРОСМОТРА -->
+        <div id="setup_view_mode">
+            <div style='border: 1px solid #ccc; padding: 20px; border-radius: 6px; background-color: #f9f9f9; max-width: 680px;'>
+                <div style='display: grid; grid-template-columns: 180px 1fr; gap: 6px 15px; align-items: center;'>
+
+                    <span style='font-weight: normal;'>Serial No</span>
+                    <div id="lbl_setup_sno" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>MAC Address</span>
+                    <div id="lbl_setup_mac" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>IP Address</span>
+                    <div id="lbl_setup_ip" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>Gateway</span>
+                    <div id="lbl_setup_gw" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>SSH Service</span>
+                    <div id="lbl_setup_ssh" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>FTP Service</span>
+                    <div id="lbl_setup_ftp" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>HTTP Service</span>
+                    <div id="lbl_setup_http" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: normal;'>Language</span>
+                    <div id="lbl_setup_lang" style='padding: 2px 0; font-weight: bold;'>—</div>
+
+                </div>
+            </div>
+
+            <div></div>
+            <div style="margin-top: 5px; display: flex; max-width: 680px;">
+              <button type="button" id="btn_setup_edit" class="btn-save btn-primary" onclick="toggleSetupMode('edit')"
+              style="background-color: #0069d9; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Изменить </button>
+
+              <button type="button" id="btn_update_app" class="btn-save btn-primary" onclick="toggleSetupMode('updatefw')"
+              style="background-color: #0069d9; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: auto;"> Обновить прошивку </button>
+              <input type="file" id="fw_file_input" style="display: none;" onchange="uploadFirmwareFile(this)" oncancel="firmwareSelectionCancel()">
+
+              <button type="button" id="btn_reboot" class='button button-reboot' onclick="triggerAction('api_action_reboot')"
+              style="cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: auto;"> Reboot </button>
+              <!-- style="margin-left: auto; margin-right: 20px;"
+              -->
+
+            </div>
+        </div>
+        <!-- Страницв 3.1 end of РЕЖИМ ПРОСТОРИ id=setup_view_mode -->
+
+        <!-- Страница 3.2 РЕЖИМ РЕДАКТИРОВАНИЯ -->
+        <div id="setup_edit_mode" style="display: none;">
+            <div style='border: 1px solid #ccc; padding: 20px; border-radius: 6px; background-color: #f9f9f9; max-width: 680px;'>
+
+                <form id="sysSetupForm" onsubmit="saveSystemSetup(event)" style='margin: 0;'>
+                    <div style='display: grid; grid-template-columns: 120px 1fr; gap: 12px 15px; align-items: center;'>
+
+                        <label style='font-weight: bold;'>IP Address</label>
+                        <input type="text" name="ip" id="input_setup_ip" required placeholder="xxx.xxx.xxx.xxx (or dhcp)" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+
+                        <label style='font-weight: bold;'>Gateway</label>
+                        <input type="text" name="gw" id="input_setup_gw" placeholder="xxx.xxx.xxx.xxx" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+
+                        <label style='font-weight: bold;'>MAC Address</label>
+                        <input type="text" name="mac" id="input_setup_mac" required pattern="^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$" placeholder="00:0a:35:ba:af:??" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+
+                        <label style='font-weight: bold;'>SSH Service</label>
+                        <select name="ssh" id="input_setup_ssh" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #fff;'>
+                            <option value="yes">yes</option>
+                            <option value="no">no</option>
+                        </select>
+
+                        <label style='font-weight: bold;'>FTP Service</label>
+                        <select name="ftp" id="input_setup_ftp" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #fff;'>
+                            <option value="yes">yes</option>
+                            <option value="no">no</option>
+                        </select>
+
+                        <label style='font-weight: bold;'>HTTP Service</label>
+                        <select name="http" id="input_setup_http" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; background-color: #fff;'>
+                            <option value="yes">yes</option>
+                            <option value="no">no</option>
+                        </select>
+
+                        <label style='font-weight: bold;'>Language</label>
+                        <input type="text" name="lang" id="input_setup_lang" required placeholder="ru_RU.UTF-8" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+
+                        <label style='font-weight: bold;'>Serial No</label>
+                        <input type="text" name="sno" id="input_setup_sno" required placeholder="AAAA-BBBB-CCCC-...-FFFF" style='padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;'>
+
+                        <div></div>
+                        <div style="margin-top: 5px; display: flex; gap: 10px;">
+                            <button type="button" id="btn_setup_cancel" class="btn-save btn-secondary" onclick="toggleSetupMode('view')" style="background-color: #6c757d; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Назад </button>
+                            <button type="submit" id="btn_setup_submit" class="btn-save btn-success" style="background-color: #28a745; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold;">Сохранить изменения</button>
+                        </div>
+
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- Страницв 3.2: end of РЕЖИМ РЕДАКТИРОВАНИЯ id=setup_edit_mode -->
+    </div>
+    <!-- Страница 3: end ofНАСТРОЙКИ СИСТЕМЫ id=view_setup -->
+
+  </div>
+  <!-- end of class='main-content' -->
+</div>
+<!-- end of class='container' -->
+EOF
+
+# 3.3 — ajax движок
+
+cat << 'EOF'
+
+<script>
+let autoRefreshInterval = null;
+let currentMode = "ATLAS";
+
+function switchView(viewName) {
+      document.querySelectorAll('.page-view').forEach(el => el.style.display = 'none');
+      document.querySelectorAll('.sidebar a').forEach(el => el.classList.remove('active'));
+
+      let el = document.getElementById('view_' + viewName);
+      if (el) {
+          el.style.display = 'block';
+      } else {
+          console.warn("Код ошибки: не найден блок страницы с ID: view_" + viewName);
+      }
+
+      el = document.getElementById('menu_' + viewName);
+      if (el) {
+          el.classList.add('active');
+      } else {
+          console.warn("Код ошибки: не найден элемент меню с ID: menu_" + viewName);
+      }
+
+      clearInterval(autoRefreshInterval);
+      if (viewName === 'status') {
+          loadStatus();
+          autoRefreshInterval = setInterval(loadStatus, 5000);
+
+      } else if (viewName === 'config') {
+          toggleConfigMode('edit');
+
+      } else if (viewName === 'setup') {
+          const viewMode = document.getElementById('setup_view_mode');
+          const editMode = document.getElementById('setup_edit_mode');
+          const btnEdit = document.getElementById('btn_setup_edit');
+
+          if (viewMode) viewMode.style.display = 'block';
+          if (editMode) editMode.style.display = 'none';
+          if (btnEdit)  btnEdit.style.display = 'inline-block';
+
+          loadSystemSetup();
+          autoRefreshInterval = setInterval(loadSystemSetup, 10000);
+      }  
+}
+
+function toggleConfigMode(mode) {
+      if (mode === 'edit') {
+          document.getElementById('sub_config_show').style.display = 'none';
+
+          if (currentMode === 'ATLAS') {
+              document.getElementById('configFormAtlas').style.display = 'block';
+              document.getElementById('configFormSIU').style.display = 'none';
+          } else {
+              document.getElementById('configFormSIU').style.display = 'block';
+              document.getElementById('configFormAtlas').style.display = 'none';
+          }
+
+          document.getElementById('sub_config_edit').style.display = 'block';
+          loadAndParseConfigToInputs();
+      } else {
+          document.getElementById('sub_config_edit').style.display = 'none';
+          document.getElementById('sub_config_show').style.display = 'block';
+          loadConfigFiles();
+      }
+}
+
+function loadStatus() {
+      fetch('?api_get_status')
+          .then(response => response.text())
+          .then(data => {
+              const parts = data.split('|||');
+              if (parts.length >= 10) {
+                  currentMode = parts[0];
+                  document.getElementById('lbl_time').innerHTML = parts[1];
+                  document.getElementById('lbl_uptime').innerText = parts[2];
+                  document.getElementById('lbl_serial').innerText = parts[3];
+                  document.getElementById('lbl_ip').innerText = parts[4];
+                  document.getElementById('lbl_app').innerText = parts[5];
+
+                  const btnStartRestart = document.getElementById('btn_start_restart');
+                  const el = document.getElementById('lbl_status');
+                  el.innerText = parts[6];
+                  if (parts[6] === 'RUN') {
+                      el.style.backgroundColor = '#e2f0d9';
+                      el.style.color = '#155724';
+                      el.style.borderColor = '#c3e6cb';
+
+                      // Если процесс работает, меняем кнопку на "Перезапустить"
+                      if (btnStartRestart) {
+                          btnStartRestart.innerText = 'Перезапустить';
+                          btnStartRestart.setAttribute('onclick', "triggerAction('api_action_restart')");
+                          btnStartRestart.style.backgroundColor = '#17a2b8'; // цвет аккуратный сине-зеленый (информационный)
+                          btnStartRestart.style.borderColor = '#117a8b';
+                      }
+                  } else {
+                      el.style.backgroundColor = '#f8d7da';
+                      el.style.color = '#721c24';
+                      el.style.borderColor = '#f5c6cb';
+
+                      // Если процесс остановлен, возвращаем кнопку "Запустить"
+                      if (btnStartRestart) {
+                          btnStartRestart.innerText = 'Запустить';
+                          btnStartRestart.setAttribute('onclick', "triggerAction('api_action_start')");
+                          btnStartRestart.style.backgroundColor = '#007bff'; // возвращаем стандартный синий цвет
+                          btnStartRestart.style.borderColor = '#0069d9';
+                      }
+                  }
+
+                  document.getElementById('lbl_system').innerText = parts[7];
+                  document.getElementById('lbl_os').innerText = parts[8];
+                  document.getElementById('lbl_tasks').innerHTML = parts[9] || "Нет активных процессов";
+
+                  if (parts[10]) {
+                      const el = document.getElementById('lbl_cfg_name');
+                      if (el) {
+                        el.innerText = parts[10];
+                      }
+                  }
+              }
+          }).catch(err => console.error("AJAX: Ошибка статуса: ", err));
+}
+
+// Загрузка текущих данных системных настроек
+function loadSystemSetup() {
+      fetch('?api_get_setup')
+          .then(response => response.json())
+          .then(data => {
+              document.getElementById('lbl_setup_ip').innerText   = data.ip || '—';
+              document.getElementById('lbl_setup_gw').innerText   = data.gateway || '—';
+              document.getElementById('lbl_setup_mac').innerText  = data.mac || '—';
+              document.getElementById('lbl_setup_ssh').innerText  = data.ssh || '—';
+              document.getElementById('lbl_setup_ftp').innerText  = data.ftp || '—';
+              document.getElementById('lbl_setup_http').innerText = data.http || '—';
+              document.getElementById('lbl_setup_lang').innerText = data.lang || '—';
+              document.getElementById('lbl_setup_sno').innerText  = data.serial || '—';
+          })
+          .catch(err => console.error("AJAX: Ошибка получения настроек: ", err));
+}
+
+function loadConfigFiles() {
+      fetch('?api_get_config_files')
+          .then(response => response.text())
+          .then(data => {
+              const files = data.split('===CONTENT_SEPARATOR===\n');
+              document.getElementById('file_config').innerText = files[0] || '';
+              document.getElementById('file_status').innerText = files[1] || '';
+          }).catch(err => console.error("AJAX: Ошибка получения файлов:", err));
+}
+
+function triggerAction(actionUrl) {
+      if (actionUrl === 'api_action_reboot' && !confirm("Перезагрузить устройство?")) {
+          return;
+      }
+
+      if (actionUrl) {
+          const el = document.getElementById('lbl_status');
+          if (el) {
+              el.style.backgroundColor = '#fff3cd'; // Мягкий желтый цвет предупреждения
+              el.style.color = '#856404';
+              el.style.borderColor = '#ffeeba';
+
+              if (actionUrl === 'api_action_restart') {
+                  el.innerText = 'Перезапуск...';
+              } else if (actionUrl === 'api_action_start') {
+                  el.innerText = 'Запуск...';
+              } else if (actionUrl === 'api_action_stop') {
+                  el.innerText = 'Остановка...';
+              } else {
+                  el.innerText = 'WAIT';
+              }
+          }
+      }
+ 
+      //const actMessage = document.getElementById('message_action');
+      //if (actionUrl !== 'api_action_reboot' && actMessage) {
+      //    actMessage.style.display = 'block';
+      //    setTimeout(() => { actMessage.style.display = 'none'; }, 3000);
+      //}
+      if (actionUrl !== 'api_action_reboot') {
+          message("Действие выполняется...", 3000);
+      }
+
+      fetch('?' + actionUrl)
+          .then(response => response.text())
+          .then(res => {
+              if (res.trim() === 'REBOOTING') {
+                  style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba;"
+                  message("Система уходит в перезагрузку\n\nСтраница обновится автоматически через 25 секунд", "info", 25000, style);
+                  setTimeout(() => window.location.reload(), 25000);
+              } else {
+                  loadStatus();
+              }
+          }).catch(err => console.error("AJAX: Ошибка отправки команды:", err));
+}
+
+function loadAndParseConfigToInputs() {
+      fetch('?api_get_config_files')
+          .then(response => response.text())
+          .then(data => {
+              const rawConfig = data.split('===CONTENT_SEPARATOR===\n');
+              const lines = rawConfig[0].split('\n');
+
+              // Массив всех возможных полей для обнуления (включая SIU параметры)
+              const fields = ['host1','port11','port12','host2','port21','port22','host3','port31','port32','proto_ver','channels',
+                              'ads_cmd_port','ads_data_port','ss_cmd_port','ss_dats_port','dtr_cmd_port',
+                              'dtr_data_port','wits_port','SystemUnits','Decimal'];
+              fields.forEach(f => { document.getElementById('input_'+f).value = ''; });
+
+              lines.forEach(line => {
+                  let clean = line.trim();
+                  if (clean.startsWith('#') || !clean.includes('=')) return;
+
+                  let kv = clean.split('=');
+                  let key = kv[0].trim();
+                  let val = kv[1].split('#')[0].trim(); 
+
+                  if (key === 'channels') {
+                    let formName = 'configFormAtlas';
+                    if (currentMode === "SIU") {
+                        formName = 'configFormSIU';
+                    }
+                    const form = document.getElementById(formName);
+                    let input = form.elements[key];
+                    if (input) input.value = val;
+                    return;
+                  }
+
+                  let input = document.getElementById('input_' + key);
+                  if (input) input.value = val;
+
+              });
+          }).catch(err => console.error("AJAX: Ошибка разбора конфигурации:", err));
+}
+
+function saveConfig(event) {
+    event.preventDefault();
+
+    const activeFormId = (currentMode === 'ATLAS') ? 'configFormAtlas' : 'configFormSIU';
+    const form = document.getElementById(activeFormId);
+    if (!form) return;
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    // Блокируем кнопку и запускаем спиннер
+    let originalBtnHtml = "";
+    if (submitBtn) {
+        const currentWidth = submitBtn.getBoundingClientRect().width;
+        submitBtn.style.width = currentWidth + 'px';
+        originalBtnHtml = submitBtn.innerHTML; // Запоминаем исходный текст
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner"></span>Сохранение...';
+        submitBtn.style.opacity = "0.74";
+    }
+
+    const formData = new URLSearchParams(new FormData(document.getElementById(activeFormId)));
+
+    fetch('?api_save_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+    })
+    .then(response => response.text())
+    .then(res => {
+      if (res.trim() === 'SUCCESS') {
+        //const message = document.getElementById('message');
+        //if (message) {
+        //  message.style.display = 'block';
+        //  setTimeout(() => { message.style.display = 'none'; }, 3000);
+        //}
+        message("Конфигурация успешно сохранена", "info");
+        toggleConfigMode('edit');
+      } else {
+        message("Не удалось сохранить конфигурацию", "error");
+      }
+    })
+    .catch(err => console.error("AJAX: Ошибка отправки формы:", err))
+    .finally(() => {
+      // Возвращаем кнопку в исходное рабочее состояние
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHtml ? originalBtnHtml : "Сохранить изменения";
+        submitBtn.style.opacity = "1";
+        submitBtn.style.width = '';
+      }
+    });
+}
+
+// Переключение режимов Просмотр / Редактирование
+async function toggleSetupMode(mode) {
+      if (mode === 'edit') {
+          document.getElementById('setup_view_mode').style.display = 'none';
+          document.getElementById('setup_edit_mode').style.display = 'block';
+          document.getElementById('btn_setup_edit').style.display = 'none';
+          document.getElementById('btn_setup_cancel').style.display = 'inline-block';
+
+          // Копируем текущие текстовые значения из формы просмотра в инпуты для редактирования
+          document.getElementById('input_setup_ip').value = document.getElementById('lbl_setup_ip').innerText;
+          document.getElementById('input_setup_gw').value = document.getElementById('lbl_setup_gw').innerText === '—' ? '' : document.getElementById('lbl_setup_gw').innerText;
+          document.getElementById('input_setup_mac').value = document.getElementById('lbl_setup_mac').innerText;
+          document.getElementById('input_setup_ssh').value = document.getElementById('lbl_setup_ssh').innerText;
+          document.getElementById('input_setup_ftp').value = document.getElementById('lbl_setup_ftp').innerText;
+          document.getElementById('input_setup_http').value = document.getElementById('lbl_setup_http').innerText;
+          document.getElementById('input_setup_lang').value = document.getElementById('lbl_setup_lang').innerText;
+          document.getElementById('input_setup_sno').value = document.getElementById('lbl_setup_sno').innerText;
+
+      } else if (mode === 'updatefw') {
+        const btn = document.getElementById('btn_update_app');
+        const currentWidth = btn.offsetWidth;
+        btn.style.minWidth = currentWidth + 'px';
+        const originalText = btn.innerText;
+
+        try {
+            // Визуально блокируем кнопку на время быстрой проверки
+            btn.disabled = true;
+            btn.innerText = 'Проверка системы...';
+            const statusResponse = await fetch('?action=check_app_status');
+            const appStatus = await statusResponse.text();
+            if (appStatus.trim() === "RUNNING") {
+                message("Необходимо остановить систему перед обновлением прошивки", "error");
+                return;
+            }
+            btn.innerText = 'Выбор файла...';
+            document.getElementById('fw_file_input').click();
+        } catch (err) {
+            console.error('Ошибка проверки статуса:', err);
+            message("Ошибка проверки статуса системы\n\n" + err, "error");
+            btn.innerText = originalText;
+        } finally {
+            btn.disabled = false;
+        }
+
+      } else {
+          document.getElementById('setup_edit_mode').style.display = 'none';
+          document.getElementById('setup_view_mode').style.display = 'block';
+          document.getElementById('btn_setup_cancel').style.display = 'none';
+          document.getElementById('btn_setup_edit').style.display = 'inline-block';
+          loadSystemSetup();
+      }
+}
+
+function firmwareSelectionCancel() {
+    console.log("Выбор файла отменен");
+    const btn = document.getElementById('btn_update_app');
+    btn.innerText = ' Обновить прошивку ';
+}
+
+// Отправка измененных данных на сервер
+function saveSystemSetup(event) {
+      event.preventDefault(); // Мгновенно предотвращаем стандартную отправку
+
+      const form = document.getElementById('sysSetupForm');
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const cancelBtn = document.getElementById('btn_setup_cancel');
+
+      // Блокируем кнопки и меняем текст, чтобы пользователь видел, что система работает
+      if (submitBtn) {
+          const currentWidth = submitBtn.getBoundingClientRect().width;
+          submitBtn.style.width = currentWidth + 'px';
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<span class="spinner"></span>Сохранение...';
+          submitBtn.style.opacity = "0.74";
+      }
+      if (cancelBtn) cancelBtn.disabled = true;
+  
+      const formData = new URLSearchParams(new FormData(form));
+  
+      // Выполняем асинхронный запрос
+      fetch('?api_save_setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData.toString()
+      })
+      .then(response => response.text())
+      .then(res => {
+          if (res.trim() === 'SUCCESS') {
+              message("Системные настройки обновлены", "info");
+              toggleSetupMode('view');
+          } else {
+              message("Ошибка при сохранении системных настроек\n\n" + res, "error");
+          }
+      })
+      .catch(err => {
+          console.error("AJAX: Ошибка отправки команды: ", err);
+          message("Не удалось связаться с сервером", "error");
+      })
+      .finally(() => {
+          // Возвращаем кнопки в исходное состояние
+          if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.innerText = "Сохранить изменения";
+              submitBtn.style.opacity = "1";
+              submitBtn.style.width = '';
+          }
+          if (cancelBtn) cancelBtn.disabled = false;
+      });
+}
+
+// Синхронизация времени
+function syncTime(button) {
+    button.disabled = true;
+
+    // 1. Получаем текущее время хоста
+    const now = new Date();
+
+    // 2. Форматируем его в YYYYMMDDhhmm.ss
+    const YYYY = now.getFullYear();
+    const MM   = String(now.getMonth() + 1).padStart(2, '0');
+    const DD   = String(now.getDate()).padStart(2, '0');
+    const hh   = String(now.getHours()).padStart(2, '0');
+    const mm   = String(now.getMinutes()).padStart(2, '0');
+    const ss   = String(now.getSeconds()).padStart(2, '0');
+
+    const hostTimeStr = `${YYYY}${MM}${DD}${hh}${mm}.${ss}`;
+
+    // 3. Отправляем сформированную строку на сервер
+    fetch(`?set_time=${hostTimeStr}`)
+      .then(response => response.text())
+      .then(updatedTime => {
+          if (updatedTime.includes("ERR")) {
+              message("Ошибка установки времени на устройстве", "info");
+          } else {
+              // Обновление времени на странице актуальным значением
+              document.getElementById('lbl_time').innerHTML = updatedTime.trim();
+          }
+      })
+      .catch(err => console.error('Ошибка:', err))
+      .finally(() => {
+          button.disabled = false;
+      });
+}
+
+// Функция обновления времени браузера
+function updateBrowserClock() {
+      const el = document.getElementById('system_date');
+      if (!el) return;
+
+      // const now = new Date();
+      // const parts = now.toString().split(' ');
+      // const dayName   = parts[0]; // Mon
+      // const monthName = parts[1]; // Jul
+      // const dayNum    = parts[2]; // 27
+      // const year      = parts[3]; // 2026
+      // const timeStr   = parts[4]; // 13:19:34
+      // // Формат: Mon Jul 27 13:19:34 2026
+      // el.innerHTML = `${dayName} ${monthName} ${dayNum} ${timeStr} ${year}`;
+
+      const now = new Date();
+      const dayNameRaw   = new Intl.DateTimeFormat('ru-RU', { weekday: 'long' }).format(now);
+      const monthNameRaw = new Intl.DateTimeFormat('ru-RU', { month: 'short' }).format(now);
+      const dayNum       = new Intl.DateTimeFormat('ru-RU', { day: 'numeric' }).format(now);
+      const year         = new Intl.DateTimeFormat('ru-RU', { year: 'numeric' }).format(now);
+
+      const hours   = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const seconds = String(now.getSeconds()).padStart(2, '0');
+      const timeStr = `${hours}:${minutes}:${seconds}`;
+
+      const dayName   = (dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1)).replace('.', '');
+      const monthName = (monthNameRaw.charAt(0).toUpperCase() + monthNameRaw.slice(1)).replace('.', '');
+      // Формат: Mon Jul 27 13:19:34 2026
+      //el.innerText = `${dayName} ${monthName} ${dayNum} ${timeStr} ${year}`;
+      el.innerHTML = `${dayName}, ${dayNum} ${monthName} ${year} &nbsp; ${timeStr}`;
+}
+
+// Функция отправки файла
+async function uploadFirmwareFile(input) {
+    if (input.files.length === 0) return;
+
+    const file = input.files[0];
+    const btn = document.getElementById('btn_update_app');
+    btn.disabled = true;
+    const originalText = ' Обновить прошивку ';
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        btn.innerText = 'Расчет SHA-256...';
+        const arrayBuffer = e.target.result;
+        const calculatedHash = sha256(arrayBuffer);
+        console.info('calculatedHash: ', calculatedHash);
+
+        btn.innerText = 'Подтверждение...';
+        if (!confirm(`Файл: ${file.name}\nРазмер: ${(file.size / 1024 / 1024).toFixed(2)} МБ\nSHA-256:\n${calculatedHash}\n\nПродолжать?`)) {
+            input.value = '';
+            btn.disabled = false;
+            btn.innerText = originalText;
+            return;
+        }
+
+        btn.innerText = 'Загрузка...';
+        btn.classList.add('btn-uploading');
+
+        const formData = new FormData();
+        formData.append('firmware', file);
+
+        fetch(`?action=uploadfw&expected_hash=${calculatedHash}`, {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.text())
+        .then(result => {
+            const status = result.trim();
+            if (status === "SUCCESS") {
+                message("Обновлено успешно", "success", 30000);
+            } else if (status === "ERR_HASH_MISMATCH") {
+                message("Ошибка контрольной суммы", "error");
+            } else if (status === "ERR_APP_NOT_STOP") {
+                message("Необходимо остановить систему", "info");
+            } else if (status === "ERR_BAD_EXPECTED_HASH") {
+                message("Не верный формат контрольной суммы", "error");
+            } else if (status === "ERR_EMPTY_CONTENT") {
+                message("Передан пустой блок данных", "error");
+            } else if (status === "ERR_PARSE_MULTIPART") {
+                message("Передан некорректный блок данных", "error");
+            } else if (status === "ERR_FILE_NOT_SAVED") {
+                message("Ошибка сохранения принятых данных", "error");
+            } else if (status === "ERR_BACKUP_FAILED") {
+                message("Ошибка архивирования текущей пошивки", "error");
+            } else if (status === "ERR_UPDATE_FAILED") {
+                message("Ошибка установки прошивки", "error");
+            } else {
+                message("Ошибка при обновлении\n\n" + status, "error", 30000);
+            }
+        })
+        .catch(err => {
+            console.error("Сбой при отправке файла", err);
+            message("Сбой при отправке файла", "error", 15000);
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerText = originalText;
+            btn.classList.remove('btn-uploading'); 
+            input.value = ''; 
+        });
+
+    } catch (err) {
+        console.error("Ошибка при обработке: ", err);
+        message("Ошибка при обработке\n\n" + err.message, "error");
+        btn.disabled = false;
+        btn.innerText = originalText;
+        input.value = '';
+    }
+  };
+
+  reader.onerror = function() {
+      console.error("Не удалось прочитать файл");
+      message("Не удалось прочитать файл", "error");
+      btn.disabled = false;
+      btn.innerText = originalText;
+      input.value = '';
+  };
+
+  console.info("selected fail: ", file.name, "\nsize: ", file.size);
+  reader.readAsArrayBuffer(file);
+}
+
+function message(text, type = 'info', timeout = 5000, style = '') {
+    const container = document.getElementById('message-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    const oldTimerId = container.getAttribute('data-message-timer');
+    if (oldTimerId) {
+        clearTimeout(parseInt(oldTimerId, 10));
+    }
+
+    const msg = document.createElement('div');
+    msg.className = `custom-message ${type}`;
+
+    let htmlText = text.replace(/\r?\n/g, '<br>');
+    msg.innerHTML = `
+        <span class="custom-message-text">${htmlText}</span>
+        <span class="custom-message-close" onclick="this.parentElement.remove();">&times;</span>
+    `;
+
+    if (style !== '') {
+       msg.style.cssText += "; " + style;
+    }
+
+    container.appendChild(msg);
+
+    setTimeout(() => {
+        if (msg.parentNode) msg.classList.add('show');
+    }, 10);
+
+    const newTimerId = setTimeout(() => {
+        if (msg.parentNode) {
+            msg.classList.remove('show');
+            msg.addEventListener('transitionend', () => {
+                msg.remove();
+            });
+        }
+    }, timeout);
+
+    container.setAttribute('data-message-timer', newTimerId);
+}
+
+
+//-----
+document.addEventListener("DOMContentLoaded", () => {
+    updateBrowserClock();
+    setInterval(updateBrowserClock, 1000);
+});
+
+//-----
+window.onload = function() {
+    switchView('status');
+};
+
+</script>
+
+</body>
+</html>
+EOF

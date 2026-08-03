@@ -1,6 +1,12 @@
 # webcontrolpanel_esz7
 WEB Control Panel for embedded linux device
 
+### ScreenShots
+
+[Screenshot 2026-08-03 170614.png](Screenshots/Screenshot 2026-08-03 170614.png)
+[Screenshot 2026-08-03 170706.png](Screenshots/Screenshot 2026-08-03 170706.png)
+[Screenshot 2026-08-03 170724.png](Screenshots/Screenshot 2026-08-03 170724.png)
+
 
 # License
 If you use this code in a commercial product (or just use it at all), I would love to hear about it!
