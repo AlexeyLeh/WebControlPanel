@@ -1,0 +1,729 @@
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title id='title'>ББИ</title>
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
+  <script src="/sha256.min.js"></script>
+
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #fff; color: #333; }
+    .container { display: flex; gap: 30px; }
+    .sidebar { width: 160px; border-right: 1px solid #eee; padding-right: 10px; flex-shrink: 0; }
+    .sidebar a { display: block; padding: 10px 12px; color: #007bff; text-decoration: none; margin-bottom: 6px; border-radius: 4px; }
+    .sidebar a:hover, .sidebar a.active { background-color: #e0e0e0; font-weight: bold; }
+    .main-content { flex: 1; min-width: 0; }
+    .page-view { font-size: 1.1em; }
+    .value-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .value-label { font-weight: bold; width: 150px; color: #333; flex-shrink: 0; }
+    .value-display { background: #f4f4f4; padding: 6px 10px; border-radius: 4px; min-width: 200px; border: 1px solid #e1e1e1; }
+    .value-display-bold { font-weight: bold; padding: 6px 12px; background: #e2f0d9; border-radius: 4px; border: 1px solid #c3e6cb; min-width: 65px; text-align: center; display: inline-block; }
+    .value-display-pre { font-family: monospace; background: #fafafa; padding: 12px; border: 1px solid #ddd; border-radius: 4px; width: 100%; white-space: pre-wrap; overflow-x: auto; box-sizing: border-box; }
+    .flow-message { position: fixed; top: 20px; right: 20px; background: #d4edda; color: #155724; border: 1px solid #c3e6cb; padding: 15px 25px; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 9999; display: none; font-family: sans-serif; font-weight: bold; }
+    .config-container { display: flex; gap: 15px; align-items: flex-start; }
+    .display-telemetry { border: 1px solid #ccc; padding: 12px; border-radius: 6px; background: #f9f9f9; min-width: 0; font-size: 1.5em;}
+    .display-config { flex: 1; border: 1px solid #ccc; padding: 12px; border-radius: 6px; background: #f9f9f9; min-width: 0; }
+    .display-config h3 { margin-top: 0; margin-bottom: 10px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+    .display-config pre { margin: 0; white-space: pre-wrap; font-family: monospace; overflow-x: auto; }
+    .table-setup { width: 100%; max-width: 600px; border-collapse: collapse; border: 1px solid #dee2e6; border-radius: 4px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); margin-top: 10px; }
+    .table-setup tr:not(:last-child) { border-bottom: 1px solid #dee2e6 !important; }
+    .table-setup td:first-child { padding: 5px 10px !important; width: 150px; color: #495057; }
+    .table-setup td:last-child  { padding: 5px 10px !important; font-weight: bold; }
+    .table-setup tr:hover { background-color: #f8f9fa; }
+    .time-container { display: flex; align-items: center; gap: 10px; width: 100%; }
+    .sync-btn { margin-left: 15px; padding: 5px 12px; font-size: 13px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; white-space: nowrap; }
+    .sync-btn:hover { background-color: #0056b3; }
+    .sync-btn:disabled { background-color: #cccccc; cursor: not-allowed; }
+    .button { width: 140px; background: #007bff; color: white; border: 1px solid #0069d9; padding: 6px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1.0em; }
+    .button:hover { background: #0069d9; }
+    .button-stop { background: #0069d9; border-color: #bd2130; }
+    .button-stop:hover { background: #dc3545; }
+    .button-reboot { background: #ffc107; border-color: #e0a800; color: #000; }
+    .button-reboot:hover { background: #dc3545; color: #fff; }
+    .btn-save { height: 26px !important; font-size: 0.8em !important; line-height: 0.9em !important; box-sizing: border-box !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; font-weight: bold !important; }
+
+    .updates-page-container {
+        display: flex !important;
+        justify-content: left !important;
+        align-items: center !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        padding: 20px !important;
+    }
+    .updates-card {
+        border: 1px solid #ccc !important;
+        padding: 24px 30px !important;
+        border-radius: 6px !important;
+        background-color: #f9f9f9 !important;
+        width: 100% !important;
+        max-width: 620px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 8px !important;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05) !important;
+    }
+    .update-row {
+        padding: 8px 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important; 
+        border-bottom: 1px dashed #e0e0e0 !important;
+    }
+    .update-row:last-child {
+        border-bottom: none !important;
+    }
+
+    .updates-remark-block {
+        margin-top: 15px !important;
+        padding-top: 12px !important;
+        border-top: 1px solid #ddd !important; /* Тонкая линия отделения от кнопок */
+        font-size: 0.88em !important;
+        color: #666 !important;                /* Мягкий серый цвет текста */
+        line-height: 1.4em !important;
+    }
+
+    .remark-title {
+        font-weight: bold !important;
+        color: #444 !important;
+        margin-bottom: 6px !important;
+        list-style-type: none !important;     /* Убираем маркер для главного заголовка */
+        margin-left: -15px !important;        /* Выравниваем заголовок чуть левее списка */
+    }
+
+    .updates-remark-block ul {
+        margin: 0 !important;
+        padding-left: 15px !important;
+    }
+
+    .updates-remark-block li {
+        margin-bottom: 4px !important;
+    }
+
+
+    .btn-updates {
+        position: relative !important;
+        width: 250px !important;
+        min-height: 42px !important;
+        font-size: 1.0em !important;
+        line-height: 1.2em !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-weight: bold !important;
+        text-align: center !important;
+        background-color: #0069d9 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        padding: 4px 30px 4px 15px !important;
+        margin-right: 25px !important;
+        flex-shrink: 0 !important;
+        transition: background-color 0.2s ease-in-out !important;
+    }
+
+    .btn-updates:hover {
+        background-color: #0056b3 !important;
+    }
+
+    .btn-updates:disabled {
+        background-color: #a0a0a0 !important;
+        cursor: not-allowed !important;
+    }
+
+    .btn-updates::after {
+        content: "" !important;
+        position: absolute !important;
+        right: 12px !important;
+        top: calc(50% - 8px) !important;
+        width: 14px !important;
+        height: 14px !important;
+        border: 2px solid rgba(255, 255, 255, 0.3) !important; 
+        border-top-color: white !important;
+        border-radius: 50% !important;
+        opacity: 0 !important;
+        transition: opacity 0.2s ease-in-out !important;
+        box-sizing: border-box !important;
+    }
+
+    .btn-updates.btn-uploading::after {
+        opacity: 1 !important;
+        animation: btn-spin 0.8s linear infinite !important;
+    }
+
+    .btn-updates.btn-uploading {
+        padding-right: 35px !important;
+    }
+
+    @keyframes btn-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+
+    .version-output-box {
+        font-family: monospace !important;
+        font-size: 1.1em !important;
+        color: #333 !important;
+        background-color: #eaeaea !important;
+        padding: 6px 12px !important;
+        border-radius: 4px !important;
+        border: 1px solid #ddd !important;
+        width: 280px !important;
+        min-height: 42px !important;
+        box-sizing: border-box !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        text-align: left !important;
+        line-height: 1.3em !important;
+        flex-shrink: 0 !important;
+        opacity: 1 !important;
+        transition: opacity 0.2s ease-in-out !important;
+    }
+
+    .version-output-box.version-loading {
+        opacity: 0.4 !important;
+    }
+
+
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.3); border-radius: 50%; border-top-color: #fff; animation: webSpinnerRotate 0.8s linear infinite; margin-right: 8px; flex-shrink: 0; }
+    @keyframes webSpinnerRotate { to { transform: rotate(360deg); } }
+
+    .animated-logo { display: inline-block; vertical-align: middle; opacity: 0; transform: translateY(-20px); animation: webLogoFlyIn 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; animation-delay: 0.2s; }
+    @keyframes webLogoFlyIn { to { opacity: 1; transform: translateY(0); }}
+
+    .btn-uploading { background-color: #ff5000 !important; color: white !important; cursor: not-allowed !important; animation: pulse-orange 1.5s infinite ease-in-out; }
+    @keyframes pulse-orange {
+        0% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 80, 0, 0.7); }
+       50% { opacity: 0.6; box-shadow: 0 0 0 10px rgba(255, 80, 0, 0); }
+      100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 80, 0, 0); }
+    }
+
+    #message-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+    .custom-message { min-width: 280px; max-width: 350px; padding: 12px 20px; border-radius: 6px; color: #ffffff; font-family: sans-serif; font-size: 14px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); display: flex; justify-content: space-between; align-items: center; opacity: 0; transform: translateY(-20px); transition: opacity 0.3s ease, transform 0.3s ease; }
+    .custom-message.info    { background-color: #17a2b8; }
+    .custom-message.success { background-color: #28a745; }
+    .custom-message.error   { background-color: #dc3545; }
+    .custom-message.show { opacity: 1; transform: translateY(0); }
+    .custom-message-close { margin-left: 15px; cursor: pointer; font-weight: bold; opacity: 0.7;}
+    .custom-message-close:hover { opacity: 1;}
+
+    input[type="text"] {
+        font-size:0.9em;
+        padding: 4px 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;'
+        box-sizing: border-box;
+    }
+    input[type="text"]:focus {
+        //border-color: #4b6eaf;
+        //outline: none;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      font-size:0.9em;
+      height: 24px;
+      transform: scale(0.8);
+      transform-origin: right center;
+      cursor: pointer;
+    }
+    @-moz-document url-prefix() {
+      input[type="number"] {
+        -moz-appearance: textfield;
+      }
+    }
+
+    select {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+
+        padding: 4px 10px;
+        font-size: 1.0em;
+        font-family: inherit;
+
+        border: 1px solid #ccc;
+        border-radius: 4px;
+
+        background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNhOWI3YzYiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=");
+        //background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNhOWI3YzYiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=");
+        //background-image: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiNhOWI3YzYiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cG9seWxpbmUgcG9pbnRzPSI2IDkgMTIgMTUgMTggOSI+PC9wb2x5bGluZT48L3N2Zz4=");
+        background-size: 20px;
+        background-position: right 10px center;
+        background-repeat: no-repeat;
+  
+        background-clip: padding-box; 
+        cursor: pointer;
+        box-sizing: border-box;
+  }
+
+  select:focus {
+      border-color: #4b6eaf;
+      outline: none;
+  }
+
+  select option {
+      //background-color: #2b2b2b;    /* Цвет фона выпадающего меню */
+      //color: #a9b7c6;
+  }
+
+  </style>
+</head>
+<body>
+
+<div id="message-container"></div>
+<!--
+<div style=" display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 25px; border-bottom: 2px solid #333; padding-bottom: 12px;">
+-->
+<div style=" display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 5px; border-bottom: 2px solid #333; padding-bottom: 12px;">
+<div style="display: flex; align-items: center; gap: 15px;">
+  <a href="control" class="animated-logo" style="text-decoration: none; line-height: 0;">
+      <picture id="wb_Picture1">
+          <img src="../../logo-64.png" id="Picture1" alt="Logo" width="64" height="64" style="border-radius: 4px; display: block;">
+      </picture>
+  </a>
+  <div style="display: flex; flex-direction: column; gap: 4px;">
+      <span id='mode_title' style="font-size: 1.6em; font-weight: bold; color: #212529; line-height: 1.2;">АТЛАС</span>
+      <span id='system_date' style="font-size: 0.95em; color: #1a73e8; font-weight: bold; letter-spacing: 0.5px;"> --:--:-- </span>
+      <span id='system_ip' style="font-size: 0.95em; color: #1a73e8; font-weight: bold; letter-spacing: 0.5px;">IP: ...</span>
+  </div>
+  </div>
+    <div style="display: flex; flex-direction: column; gap: 4px; font-weight: 500; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; padding-bottom: 10px;">
+    <span >Web Control Panel</span>
+    <span id="title_wcp_ver" style="margin-left: auto; text-transform: none !important;">&nbsp;</span>
+    </div>
+</div>
+
+<div class='container'>
+
+  <!-- Меню навигации (слева) -->
+  <div class='sidebar'>
+    <a href="#" id="menu_status"    onclick="switchView('status')" class="active">Статус системы</a>
+    <a href="#" id="menu_telemetry" onclick="switchView('telemetry')">Телеметрия</a>
+    <a href="#" id="menu_config"    onclick="switchView('config')">Конфигурация</a>
+    <a href="#" id="menu_setup"     onclick="switchView('setup')">Системные настройки</a>
+    <a href="#" id="menu_protocol"  onclick="switchView('protocol')">Протокол работы</a>
+    <a href="#" id="menu_updates"   onclick="switchView('updates')">Обновления</a>
+  </div>
+
+  <!-- Контентные страницы -->
+  <div class='main-content'>
+
+    <!-- Страница 1: СТАТУС СИСТЕМЫ -->
+    <div id="view_status" class="page-view">
+      <!-- <div class='panel-title' style='text-align: left; margin-bottom: 15px;'><h2>Статус</h2></div> -->
+
+      <div class='value-row'><div class='value-label'>Серийный Номер</div><div class='value-display' id='lbl_serial'>...</div></div>
+
+      <div class='value-row' style="margin-top: 10px; margin-bottom: 10px;">
+        <div class='value-label'>Статус</div>
+        <div class='value-display-bold' id='lbl_status' style="width:100px; margin-right: 15px; background-color: #f8d7da; color: #721c24; border-color: #f5c6cb;">WAIT</div>
+        <button class='button' id='btn_start_restart' onclick="triggerAction('api_action_start')">Запустить</button>
+        <button class='button button-stop' onclick="triggerAction('api_action_stop')">Остановить</button>
+      </div>
+
+      <div class='value-row'>
+        <div class='value-label'>Текущее время</div>
+        <div class='value-display' id='lbl_time'>...<br>&nbsp;</div>
+        <button class='sync-btn' onclick='syncTime(this)'>Синхронизировать</button>
+      </div>
+ 
+      <div class='value-row'>
+        <div class='value-label'>Время работы</div>
+        <div class='value-display' id='lbl_uptime'>...</div>
+      </div>
+
+      <div class='value-row'><div class='value-label'>Версия ПО</div>
+        <div class='value-display' id='lbl_app'>...</div>
+      </div>
+      <div class='value-row'><div class='value-label'>IP</div>
+        <div class='value-display' id='lbl_ip'>...</div>
+      </div>
+      <div class='value-row'><div class='value-label'>Система</div>
+        <div class='value-display' id='lbl_system'>&nbsp;<br>...<br>&nbsp;</div>
+        <div class='value-display' id='lbl_firmware'>...<br>&nbsp;</div>
+      </div>
+      <div style="margin-top: 0px;">
+        <div class='value-label' style="width: 100%; margin-bottom: 8px;">Tasks</div>
+        <div class='value-display-pre' id='lbl_tasks'>...</div>
+      </div>
+    </div>
+    <!-- Страница 1: end of СТАТУС СИСТЕМЫ id=view_status -->
+
+    <!-- Страница 2: ВКЛАДКА КОНФИГУРАЦИИ -->
+    <div id="view_config" class="page-view" style="display: none;">
+
+      <!-- Страница 2.1 ПРОСМОТР КОНФИГ. ФАЙЛА -->
+      <div id="sub_config_show">
+        <div class='panel-title' style='display: flex; align-items: baseline; gap: 10px; text-align: left;'>
+          <a href="#" onclick="toggleConfigMode('edit')" style='text-decoration: none; color: #007bff;'>[назад]</a>
+        </div>
+        <br>
+        <div class='config-container'>
+          <div class='display-config' style="flex: 7;">
+            <h3 id="lbl_cfg_name">...</h3>
+            <pre id="file_config">Загрузка файла конфигурации...</pre>
+          </div>
+        </div>
+      </div>
+      <!-- Страница 2.1 end of ПРОСМОТР КОНФИГ. ФАЙЛА id=sub_config_show -->
+
+      <!-- Страница 2.2: ФОРМА РЕДАКТИРОВАНИЯ КОНФИГУРАЦИИ -->
+      <div id="sub_config_edit" style="display: none;">
+        <div style='border: 1px solid #ccc; padding: 20px; border-radius: 6px; background-color: #f9f9f9; max-width: 680px;'>
+
+          <!-- ФОРМА РЕДАКТИРОВАНИЯ ПАРАМЕТРОВ АТЛАС -->
+          <form id="configFormAtlas" onsubmit="saveConfig(event)" style='margin: 0;'>
+           <div style='display: grid; grid-template-columns: 160px 250px 1fr; gap: 6px 15px; align-items: center;'>
+
+             <label style='font-weight: bold;' for='input_host1'>Адрес назначения #1</label>
+             <input type='text' id='input_host1' name='host1' placeholder='xxx.xxx.xxx.xxx' />
+             <span style='color: #666;'>IP-адрес устройства для отправки данных</span>
+
+             <label style='font-weight: bold;' for='input_port11'>Порт 1</label>
+             <input type='text' id='input_port11' name='port11' placeholder='16000' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Порт передачи данных по UDP (16000)</span>
+
+             <label style='font-weight: bold;' for='input_port12'>Порт 2</label>
+             <input type='text' id='input_port12' name='port12' placeholder='16001' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Порт передачи данных по UDP (16001)</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_host2'>Адрес назначения #2</label>
+             <input type='text' id='input_host2' name='host2' placeholder='xxx.xxx.xxx.xxx' />
+             <span style='color: #666; font-size:0.9em;'>IP-адрес второго устройства</span>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_port21'>Порт 1</span></label>
+             <input type='text' id='input_port21' name='port21' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'></span>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_port22'>Порт 2</span></label>
+             <input type='text' id='input_port22' name='port22' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'></span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_host3'>Адрес назначения #3</label>
+             <input type='text' id='input_host3' name='host3' placeholder='xxx.xxx.xxx.xxx' />
+             <span style='color: #666; font-size:0.9em;'>IP-адрес третьего устройства</span>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_port31'>Порт 1</label>
+             <input type='text' id='input_port31' name='port31' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'></span>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_port32'>Порт 2</label>
+             <input type='text' id='input_port32' name='port32' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'></span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size:0.9em;' for='input_proto_ver'>Протокол [0..1]</label>
+             <select id='input_proto_ver' name='proto_ver'>
+               <option value="0">ver: 0 [один датчик давления, вес]</option>
+               <option value="1" selected>ver: 1 [два датчика давления, вес]</option>
+               <option value="2" selected>ver: 2 [два датчика давления, ch4, вес]</option>
+             </select>
+             <span style='color: #666; font-size:0.9em;'>Версия протокола передачи данных</span>
+<!--
+             <label style='font-weight: bold; font-size:0.9em;' for='input_channels'>Каналы <span style='font-weight: normal;'>[1..4]</span></label>
+             <input type='text' id='input_channels' name='channels' placeholder='1,2,3' />
+             <span style='color: #666; font-size:0.9em;'>Список каналов для оцифровки</span>
+-->
+           </div>
+
+           <div style='display: flex; gap: 10px; margin-top: 15px; border-top: 1px solid #ccc; padding-top: 12px; padding-left: 135px;'>
+             <button type='button' id="btn_setup_cancel" class='btn-save btn-secondary'
+               style="background-color: #6c757d; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"
+               onclick='loadAndParseConfigToInputs()'
+             > Отмена </button>
+             <button type='submit' id="btn_setup_submit" class='btn-save btn-success'
+               style="background-color: #28a745; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"
+             > Сохранить изменения </button>
+            <a href="#" onclick="toggleConfigMode('show')" style='text-decoration: none; color: #007bff; margin-left: auto; align-self: center;'>[файл]</a>
+           </div>
+          </form>
+
+          <!-- ФОРМА РЕДАКТИРОВАНИЯ ПАРАМЕТРОВ SIU -->
+          <form id="configFormSIU" onsubmit="saveConfig(event)" style='margin: 0; display: none;'>
+           <div style='display: grid; grid-template-columns: 140px 140px 1fr; gap: 6px 15px; align-items: center;'>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>ADS Command Port</label>
+             <input type='text' id='input_ads_cmd_port' name='ads_cmd_port' placeholder='8220' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Командный порт ADS (TCP/IP)</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>ADS Data Port</label>
+             <input type='text' id='input_ads_data_port' name='ads_data_port' placeholder='8110' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Порт данных ADS (TCP/IP)</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>SureShot Command Port</label>
+             <input type='text' id='input_ss_cmd_port' name='ss_cmd_port' placeholder='7111' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Командный порт SureShot</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>SureShot Data Port</label>
+             <input type='text' id='input_ss_dats_port' name='ss_dats_port' placeholder='8111' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Порт данных SureShot</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>Depth Tracker Command Port</label>
+             <input type='text' id='input_dtr_cmd_port' name='dtr_cmd_port' placeholder='7110' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Командный порт Depth Tracker</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>Depth Tracker Data Port</label>
+             <input type='text' id='input_dtr_data_port' name='dtr_data_port' placeholder='8210' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Порт данных Depth Tracker</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>WITS Network Port</label>
+             <input type='text' id='input_wits_port' name='wits_port' placeholder='5005' inputmode='numeric' oninput="this.value = this.value.replace(/[^0-9]/g, '');" />
+             <span style='color: #666; font-size:0.9em;'>Сетевой порт WITS</span>
+
+             <div style='grid-column: span 3; border-top: 1px dashed #ddd; margin: 3px 0;'></div>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>System Units</label>
+             <select id='input_SystemUnits' name='SystemUnits'>
+               <option value="M">M (Metric)</option>
+               <option value="E" selected>E (English)</option>
+             </select>
+             <span style='color: #444; font-size:0.9em;'>Метрическая (M) или Английская (E) система</span>
+
+             <label style='font-weight: bold; font-size: 0.9em;'>Decimal Delimiter</label>
+             <select id='input_Decimal' name='Decimal'>
+               <option value="dot" selected>dot (.) Точка</option>
+               <option value="comma">comma (,) Запятая</option>
+             </select>
+             <span style='color: #444; font-size:0.9em;'>Разделитель десятичных знаков</span>
+<!--
+             <label style='font-weight: bold; font-size: 0.9em;'>Каналы <span style='font-weight: normal; font-size: 0.9em;'>[1..4]</span></label>
+             <input type='text' id='input_channels' name='channels' />
+             <span style='color: #666; font-size:0.9em;'>Список каналов для оцифровки</span>
+-->
+           </div>
+           <div style='display: flex; gap: 10px; margin-top: 15px; border-top: 1px solid #ccc; padding-top: 12px; padding-left: 135px;'>
+             <button type='button' id="btn_setup_cancel" class='btn-save btn-secondary' 
+               style="background-color: #6c757d; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"
+               onclick='loadAndParseConfigToInputs()'
+             > Отмена </button>
+             <button type='submit' id="btn_setup_submit" class='btn-save btn-success'
+               style="background-color: #28a745; color: white; border: none; padding: 6px 16px; cursor: pointer; border-radius: 4px; font-weight: bold;"
+             > Сохранить изменения </button>
+           </div>
+          </form>
+        </div> 
+      </div>
+      <!-- СТРАНИЦА 2.2: end of ФОРМА РЕДАКТИРОВАНИЯ КОНФИГУРАЦИИ id=sub_config_edit -->
+    </div>
+    <!-- Страница 2: end of ВКЛАДКА КОНФИГУРАЦИИ id=view_config -->
+
+    <!-- Страница 3: НАСТРОЙКИ СИСТЕМЫ -->
+    <div id="view_setup" class="page-view" style="display: none; padding: 20px;">
+
+        <!-- Шапка с кнопками управления -->
+        <div class='panel-title' style="display: flex; align-items: baseline; gap: 10px; text-align: left; margin-bottom: 15px;">
+            <h2 style="margin: 0;">Системные настройки</h2>
+        </div>
+
+        <!-- Страница 3.1 РЕЖИМ ПРОСМОТРА -->
+        <div id="setup_view_mode">
+            <div style='border: 1px solid #ccc; padding: 20px; border-radius: 6px; background-color: #f9f9f9; max-width: 680px;'>
+                <div style='display: grid; grid-template-columns: 130px 1fr; gap: 6px 15px; align-items: center;'>
+
+                    <span style='font-weight: bold;'>IP Address</span>
+                    <div id="lbl_setup_ip" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>Gateway</span>
+                    <div id="lbl_setup_gw" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>MAC Address</span>
+                    <div id="lbl_setup_mac" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>SSH Service</span>
+                    <div id="lbl_setup_ssh" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>FTP Service</span>
+                    <div id="lbl_setup_ftp" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>HTTP Service</span>
+                    <div id="lbl_setup_http" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>Language</span>
+                    <div id="lbl_setup_lang" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                    <span style='font-weight: bold;'>Serial No</span>
+                    <div id="lbl_setup_sno" style='padding: 4px 0; font-weight: bold;'>—</div>
+
+                </div>
+
+                <div style='display: flex; gap: 10px; margin-top: 15px; border-top: 1px solid #ccc; padding-top: 12px; padding-left: 0px;'>
+                  <button type="button" id="btn_setup_edit" class="btn-save" onclick="toggleSetupMode('edit')"
+                  style="background-color: #0069d9; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold;"> Изменить </button>
+
+                  <button type="button" id="btn_reboot" class='button button-reboot' onclick="triggerAction('api_action_reboot')"
+                  style="cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: auto;"> Reboot </button>
+                  <!-- style="margin-left: auto; margin-right: 20px;"
+                  -->
+                </div>
+
+            </div>
+        </div>
+        <!-- Страницв 3.1 end of РЕЖИМ ПРОСМОТРА id=setup_view_mode -->
+
+        <!-- Страница 3.2 РЕЖИМ РЕДАКТИРОВАНИЯ -->
+        <div id="setup_edit_mode" style="display: none;">
+            <div style='border: 1px solid #ccc; padding: 20px; border-radius: 6px; background-color: #f9f9f9; max-width: 680px;'>
+
+                <form id="sysSetupForm" onsubmit="saveSystemSetup(event)" style='margin: 0;'>
+                    <div style='display: grid; grid-template-columns: 120px 1fr; gap: 6px 15px; align-items: center;'>
+
+                        <label style='font-weight: bold;'>IP Address</label>
+                        <input type="text" name="ip" id="input_setup_ip" required placeholder="xxx.xxx.xxx.xxx (or dhcp)" />
+
+                        <label style='font-weight: bold;'>Gateway</label>
+                        <input type="text" name="gw" id="input_setup_gw" placeholder="xxx.xxx.xxx.xxx" />
+
+                        <label style='font-weight: bold;'>MAC Address</label>
+                        <input type="text" name="mac" id="input_setup_mac" required pattern="^([0-9A-Fa-f]{2}[:\-]){5}([0-9A-Fa-f]{2})$" placeholder="00:0a:35:ba:af:??" />
+
+                        <label style='font-weight: bold;'>SSH Service</label>
+                        <select name="ssh" id="input_setup_ssh">
+                            <option value="yes">yes</option>
+                            <option value="no">no</option>
+                        </select>
+
+                        <label style='font-weight: bold;'>FTP Service</label>
+                        <select name="ftp" id="input_setup_ftp">
+                            <option value="yes">yes</option>
+                            <option value="no">no</option>
+                        </select>
+
+                        <label style='font-weight: bold;'>HTTP Service</label>
+                        <select name="http" id="input_setup_http">
+                            <option value="yes">yes</option>
+                            <option value="no">no</option>
+                        </select>
+
+                        <label style='font-weight: bold;'>Language</label>
+                        <input type="text" name="lang" id="input_setup_lang" required placeholder="ru_RU.UTF-8" />
+
+                        <label style='font-weight: bold;'>Serial No</label>
+                        <input type="text" name="sno" id="input_setup_sno" required placeholder="AAAA-BBBB-CCCC-...-FFFF" />
+
+                        <div></div>
+                        <div style="margin-top: 5px; display: flex; gap: 10px;">
+                          <button type="submit" id="btn_setup_submit" class="btn-save btn-success"
+                            style="background-color: #28a745; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold;"
+                          >Сохранить изменения</button>
+                          <button type="button" id="btn_setup_cancel" class="btn-save btn-secondary"
+                            style="background-color: #6c757d; color: white; border: none; padding: 8px 20px; cursor: pointer; border-radius: 4px; font-weight: bold;"
+                            onclick="toggleSetupMode('view')"
+                          > Назад </button>
+                        </div>
+
+                    </div>
+                </form>
+            </div>
+        </div>
+        <!-- Страницв 3.2: end of РЕЖИМ РЕДАКТИРОВАНИЯ id=setup_edit_mode -->
+    </div>
+    <!-- Страница 3: end of НАСТРОЙКИ СИСТЕМЫ id=view_setup -->
+
+    <!-- Страница 4: Телеметрия -->
+    <div id='view_telemetry' class='page-view' style='display: none; padding: 20px;'>
+        <div class='display-telemetry' style='font-size: 1.5em; display: grid; grid-template-columns: 200px max-content 250px max-content; gap: 10px 20px; align-items: center;'>
+
+            <span style='font-weight:bold;'>Время работы</span>
+            <div id='fld_uptime2' style='padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+            <span style='font-weight:bold; text-align: left; margin-left: 50px;'>Задержка для двух<br>датчиков давления</span>
+            <div id="fld_dptdelay" style='padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Энкодер №1</span>
+            <div id="fld_enc1" style='padding: 2px 0; font-weight: bold; font-size: 1.4em;'>&nbsp;</div>
+            <span style='font-weight:bold; text-align: left; margin-left: 50px;'>Перестановка<br>каналов 1/2</span>
+            <div id="fld_swapch12" style='padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Энкодер №2</span>
+            <div id="fld_enc2" style='grid-column: span 3; padding: 2px 0; font-weight: bold; font-size: 1.4em;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Канал №1 <span style='font-size:0.6em;'>(среднее)</span></span>
+            <div id="fld_ch1avrg" style='grid-column: span 3; padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Канал №2 <span style='font-size:0.6em;'>(среднее)</span></span>
+            <div id="fld_ch2avrg" style='grid-column: span 3; padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Канал №3 <span style='font-size:0.6em;'>(среднее)</span></span>
+            <div id="fld_ch3avrg" style='grid-column: span 3; padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Канал №4 <span style='font-size:0.6em;'>(среднее)</span></span>
+            <div id="fld_ch4avrg" style='grid-column: span 3; padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Отправлено пакетов</span>
+            <div id="fld_sentok" style='grid-column: span 3; padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+
+            <span style='font-weight:bold;'>Ошибок</span>
+            <div id="fld_senterr" style='grid-column: span 3; padding: 2px 0; font-weight: bold;'>&nbsp;</div>
+        </div>
+    </div>
+    <!-- Страница 4: end of ТЕЛЕМЕТРИЯ id=view_telemetry -->
+
+    <!-- Страница 5: Протокол работы -->
+    <div id="view_protocol" class="page-view" style="display: none; padding: 20px; max-width: 800px;">
+      <div class='display-config' style="flex: 7;">
+        <h3>Протокол ПО</h3>
+        <pre id='log_file_lines'>Last lines...</pre>
+        <pre id='log_file_content' style='font-size: 1.2em;'>Загрузка протокола...</pre>
+      </div>
+    </div>
+    <!-- Страница 5: end of Протокол работы id=view_protocol -->
+
+    <!-- Страница 6. ОБНОВЛЕНИЯ -->
+    <div id="view_updates" class="page-view" style="display: none;">
+      <div class="updates-page-container">
+        <div class="updates-card">
+
+          <div id="div_upd_app" class="update-row">
+              <button type="button" id="btn_update_app" class="btn-updates" onclick="update_procedure('update_app')">Обновление ПО</button>
+              <input type="file" id="input_file_update_app" accept=".zip" style="display: none;" onchange="uploadFile(this)" oncancel="fileSelectionCancel(this, 'Обновление ПО')" />
+              <div id="version_app" class="version-output-box">...</div>
+          </div>
+
+          <div id="div_upd_w3" class="update-row">
+              <button type="button" id="btn_update_wcp" class="btn-updates" onclick="update_procedure('update_wcp')">Обновление <br> Web Control Panel</button>
+              <input type="file" id="input_file_update_wcp" accept=".zip" style="display: none;" onchange="uploadFile(this)" oncancel="fileSelectionCancel(this, 'Обновление <br> Web Control Panel')" />
+              <div id="version_wcp" class="version-output-box">...</div>
+          </div>
+
+          <div id="div_upd_fw" class="update-row">
+              <button type="button" id="btn_update_firmware" class="btn-updates" onclick="update_procedure('update_firmware')">Обновление <br> Firmware</button>
+              <input type="file" id="input_file_update_firmware" accept=".zip" style="display: none;" onchange="uploadFile(this)" oncancel="fileSelectionCancel(this, 'Обновление <br> Firmware')" />
+              <div id="version_fmw" class="version-output-box">...</div>
+          </div>
+
+           <div style='display: flex; gap: 10px; margin-top: 15px; border-top: 1px solid #ccc; padding-top: 12px; padding-left: 135px;'>
+              <button type="button" id="btn_reboot" class='button button-reboot' onclick="triggerAction('api_action_reboot')"
+              style="cursor: pointer; border-radius: 4px; font-weight: bold; margin-left: auto;"> Reboot </button>
+              <!-- style="margin-left: auto; margin-right: 20px;"
+              -->
+           </div>
+
+        </div>
+      </div>
+
+      <div class="updates-remark-block">
+          <ul>
+              <li class="remark-title">Формат обновления:</li>
+              <li>обновление - это файл-архив, сжатие zip</li>
+              <li>внутри каталог</li>
+              <li>имена любые</li>
+              <li>содержимое обновления должно соответствовать назначению (имеется контроль файлов)</li>
+          </ul>
+      </div>
+
+    </div>
+    <!-- Страницв 6 end of ОБНОВЛЕНИЯ id=view_updates -->
+
+  </div>
+  <!-- end of class='main-content' -->
+</div>
+<!-- end of class='container' -->
