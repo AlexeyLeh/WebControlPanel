@@ -1,4 +1,4 @@
-# webcontrolpanel_esz7
+# webcontrolpanel
 WEB Control Panel for embedded linux device
 
 ### ScreenShots

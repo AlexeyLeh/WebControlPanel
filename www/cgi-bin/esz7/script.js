@@ -7,58 +7,62 @@ let currentMode = "ATLAS";
 
 function switchView(viewName)
 {
-      document.querySelectorAll('.page-view').forEach(el => el.style.display = 'none');
-      document.querySelectorAll('.sidebar a').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.page-view').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.sidebar a').forEach(el => el.classList.remove('active'));
 
-      let el = document.getElementById('view_' + viewName);
-      if (el) {
-          el.style.display = 'block';
-      } else {
-          console.warn("Код ошибки: не найден блок страницы с ID: view_" + viewName);
-      }
+    const witsMenu = document.getElementById('menu_wits');
+    if (witsMenu) {
+        witsMenu.style.display = 'block';
+    }
 
-      el = document.getElementById('menu_' + viewName);
-      if (el) {
-          el.classList.add('active');
-      } else {
-          console.warn("Код ошибки: не найден элемент меню с ID: menu_" + viewName);
-      }
+    let el = document.getElementById('view_' + viewName);
+    if (el) {
+        el.style.display = 'block';
+    } else {
+        console.warn("Ошибка: не найден блок страницы с ID: view_" + viewName);
+    }
 
-      clearInterval(refreshStatusInterval);
-      clearInterval(refreshTelemetryInterval);
-      clearInterval(refreshSystemStatusInterval);
-      clearInterval(refreshProtocolInterval);
+    el = document.getElementById('menu_' + viewName);
+    if (el) {
+        el.classList.add('active');
+    } else {
+        console.warn("Ошибка: не найден элемент меню с ID: menu_" + viewName);
+    }
 
-      if (viewName === 'status') {
-          loadStatus();
-          refreshStatusInterval = setInterval(loadStatus, 5000);
+    clearInterval(refreshStatusInterval);
+    clearInterval(refreshTelemetryInterval);
+    clearInterval(refreshSystemStatusInterval);
+    clearInterval(refreshProtocolInterval);
 
-      } else if (viewName === 'config') {
-          toggleConfigMode('edit');
-
-      } else if (viewName === 'setup') {
-          const viewMode = document.getElementById('setup_view_mode');
-          const editMode = document.getElementById('setup_edit_mode');
-          const btnEdit = document.getElementById('btn_setup_edit');
-
-          if (viewMode) viewMode.style.display = 'block';
-          if (editMode) editMode.style.display = 'none';
-          if (btnEdit)  btnEdit.style.display = 'inline-block';
-
-          loadSystemSetup();
-          refreshSystemStatusInterval = setInterval(loadSystemSetup, 10000);
-
-      } else if (viewName === 'telemetry') {
-          loadTelemetry();
-          refreshTelemetryInterval = setInterval(loadTelemetry, 1000);
-
-      } else if (viewName === 'protocol') {
-          loadProtocol();
-          refreshProtocolInterval = setInterval(loadProtocol, 10000);
-
-      } else if (viewName === 'updates') {
-         loadVersions();
-      }
+    if (viewName === 'status') {
+        loadStatus();
+        refreshStatusInterval = setInterval(loadStatus, 5000);
+    } else if (viewName === 'config') {
+        toggleConfigMode('edit');
+    } else if (viewName === 'adccfg') {
+        loadADCConfig();
+    } else if (viewName === 'wits') {
+        loadWitsConfig();
+    } else if (viewName === 'setup') {
+        const viewMode = document.getElementById('setup_view_mode');
+        const editMode = document.getElementById('setup_edit_mode');
+        const btnEdit = document.getElementById('btn_setup_edit');
+        if (viewMode) viewMode.style.display = 'block';
+        if (editMode) editMode.style.display = 'none';
+        if (btnEdit) btnEdit.style.display = 'inline-block';
+        loadSystemSetup();
+        refreshSystemStatusInterval = setInterval(loadSystemSetup, 10000);
+    } else if (viewName === 'telemetry') {
+        loadTelemetry();
+        refreshTelemetryInterval = setInterval(loadTelemetry, 1000);
+    } else if (viewName === 'protocol') {
+        loadProtocol();
+        refreshProtocolInterval = setInterval(loadProtocol, 10000);
+    } else if (viewName === 'updates') {
+        loadVersions();
+    } else {
+        console.info('505: unregistered view name: ' + viewName);
+    }
 }
 
 function toggleConfigMode(mode)
@@ -90,20 +94,25 @@ function triggerAction(actionUrl) {
 
       if (actionUrl) {
           const el = document.getElementById('lbl_status');
-          if (el) {
-              el.style.backgroundColor = '#fff3cd'; /* Мягкий желтый цвет предупреждения */
-              el.style.color = '#856404';
-              el.style.borderColor = '#ffeeba';
+          el.style.backgroundColor = '#fff3cd'; /* Мягкий желтый цвет предупреждения */
+          el.style.color = '#856404';
+          el.style.borderColor = '#ffeeba';
 
-              if (actionUrl === 'api_action_restart') {
-                  el.innerText = 'Перезапуск...';
-              } else if (actionUrl === 'api_action_start') {
-                  el.innerText = 'Запуск...';
-              } else if (actionUrl === 'api_action_stop') {
-                  el.innerText = 'Остановка...';
-              } else {
-                  el.innerText = 'WAIT';
-              }
+          if (actionUrl === 'api_action_restart') {
+              el.innerText = 'Перезапуск...';
+          } else if (actionUrl === 'api_action_start') {
+              el.innerText = 'Запуск...';
+          } else if (actionUrl === 'api_action_stop') {
+              el.innerText = 'Остановка...';
+          } else {
+              el.innerText = 'WAIT';
+          }
+          const el2 = document.getElementById('lbl_status2');
+          if (el2) {
+            el2.innerText = el.innerText;
+            el2.style.backgroundColor = el.style.backgroundColor;
+            el2.style.color = el.style.color;
+            el2.style.borderColor = el.style.borderColor;
           }
       }
  
@@ -135,55 +144,52 @@ function triggerAction(actionUrl) {
 function loadStatus()
 {
   fetch('?api_get_status')
-      .then(response => response.text())
-      .then(data => {
-          const parts = data.split('|||');
-          if (parts.length >= 12) {
-              currentMode = parts[0];
-              document.getElementById('lbl_time').innerHTML = parts[1];
-              document.getElementById('lbl_uptime').innerText = parts[2];
-              document.getElementById('lbl_serial').innerText = parts[3];
-              document.getElementById('lbl_ip').innerText = parts[4];
-              document.getElementById('lbl_app').innerText = parts[5];
+        .then(response => {
+            if (!response.ok) {
+                throw new Error("Системная ошибка\n\n500 Internal Server Error\n\n" + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            currentMode = data.mode;
+            document.getElementById('lbl_time').innerHTML   = data.time;
+            document.getElementById('lbl_uptime').innerText = data.uptime;
+            document.getElementById('lbl_serial').innerText = data.serial;
+            document.getElementById('lbl_ip').innerText     = data.ipadr;
+            document.getElementById('lbl_app').innerText    = data.appver;
+            document.getElementById('lbl_system').innerHTML = data.system + '<br>' + data.osname;
+            document.getElementById('lbl_fmwver').innerHTML = data.fmwver;
+            document.getElementById('lbl_tasks').innerHTML  = data.tasks || "Нет активных процессов";
+            document.getElementById('lbl_cfg_name').innerText = data.cfgname;
+            document.getElementById('lbl_systemip').innerText = 'IP: ' + data.ipadr;
 
-              document.getElementById('system_ip').innerText = 'IP: ' + parts[4];
-
-              const btnStartRestart = document.getElementById('btn_start_restart');
-              const el = document.getElementById('lbl_status');
-              el.innerText = parts[6];
-              if (parts[6] === 'RUN') {
-                  el.style.backgroundColor = '#e2f0d9';
-                  el.style.color = '#155724';
-                  el.style.borderColor = '#c3e6cb';
-                  if (btnStartRestart) {
-                      btnStartRestart.innerText = 'Перезапустить';
-                      btnStartRestart.setAttribute('onclick', "triggerAction('api_action_restart')");
-                      btnStartRestart.style.backgroundColor = '#17a2b8'; /* цвет сине-зеленый */
-                      btnStartRestart.style.borderColor = '#117a8b';
-                  }
-              } else {
-                  el.style.backgroundColor = '#f8d7da';
-                  el.style.color = '#721c24';
-                  el.style.borderColor = '#f5c6cb';
-                  if (btnStartRestart) {
-                      btnStartRestart.innerText = 'Запустить';
-                      btnStartRestart.setAttribute('onclick', "triggerAction('api_action_start')");
-                      btnStartRestart.style.backgroundColor = '#007bff'; /* стандартный синий цвет */
-                      btnStartRestart.style.borderColor = '#0069d9';
-                  }
-              }
-
-              document.getElementById('lbl_system').innerHTML = parts[7] + '<br>' + parts[8];
-              document.getElementById('lbl_firmware').innerHTML = parts[9];
-              document.getElementById('lbl_tasks').innerHTML = parts[10] || "Нет активных процессов";
-
-              if (parts[11]) {
-                  const el = document.getElementById('lbl_cfg_name');
-                  if (el) {
-                    el.innerText = parts[11];
-                  }
-              }
-          }
+            const btnStartRestart = document.getElementById('btn_start_restart');
+            const el = document.getElementById('lbl_status');
+            el.innerText = data.status;
+            if (data.status === 'RUN') {
+                el.style.backgroundColor = '#e2f0d9';
+                el.style.color = '#155724';
+                el.style.borderColor = '#c3e6cb';
+                btnStartRestart.innerText = 'Перезапустить';
+                btnStartRestart.setAttribute('onclick', "triggerAction('api_action_restart')");
+                btnStartRestart.style.backgroundColor = '#17a2b8'; /* цвет сине-зеленый */
+                btnStartRestart.style.borderColor = '#117a8b';
+            } else {
+                el.style.backgroundColor = '#f8d7da';
+                el.style.color = '#721c24';
+                el.style.borderColor = '#f5c6cb';
+                btnStartRestart.innerText = 'Запустить';
+                btnStartRestart.setAttribute('onclick', "triggerAction('api_action_start')");
+                btnStartRestart.style.backgroundColor = '#007bff'; /* стандартный синий цвет */
+                btnStartRestart.style.borderColor = '#0069d9';
+            }
+            const el2 = document.getElementById('lbl_status2');
+            if (el2) {
+                el2.innerText = el.innerText;
+                el2.style.backgroundColor = el.style.backgroundColor;
+                el2.style.color = el.style.color;
+                el2.style.borderColor = el.style.borderColor;
+            }
       })
       .catch(err => {
           msg = "Ошибка: нет ответа";
@@ -203,10 +209,6 @@ function loadVersions()
     app.classList.add('version-loading');
     wcp.classList.add('version-loading');
     fmw.classList.add('version-loading');
-
-    //app.innerText = "...";
-    //wcp.innerText = "...";
-    //fmw.innerText = "...";
 
     fetch("?action=api_get_versions")
         .then(response => {
@@ -285,17 +287,55 @@ function loadTelemetry()
             return response.json();
         })
         .then(data => {
-            document.getElementById('fld_uptime2' ).innerHTML = data.uptime   ? data.uptime   : "-";
-            document.getElementById('fld_enc1'    ).innerHTML = data.enc1     ? data.enc1     : "-";
-            document.getElementById('fld_enc2'    ).innerHTML = data.enc2     ? data.enc2     : "-";
+            document.getElementById('fld_uptime2' ).innerHTML = data.uptime ? data.uptime   : "-";
+            document.getElementById('fld_enc1'    ).innerHTML = data.enc1   ? data.enc1     : "-";
+            document.getElementById('fld_enc2'    ).innerHTML = data.enc2   ? data.enc2     : "-";
 
-            document.getElementById('fld_ch1avrg' ).innerHTML = data.ch1avrg  ? (data.ch1sum + "&nbsp;/&nbsp;" + data.ch1num + "&nbsp;=&nbsp;" + data.ch1avrg)  : "-";
-            document.getElementById('fld_ch2avrg' ).innerHTML = data.ch2avrg  ? (data.ch2sum + "&nbsp;/&nbsp;" + data.ch2num + "&nbsp;=&nbsp;" + data.ch2avrg)  : "-";
-            document.getElementById('fld_ch3avrg' ).innerHTML = data.ch3avrg  ? (data.ch3sum + "&nbsp;/&nbsp;" + data.ch3num + "&nbsp;=&nbsp;" + data.ch3avrg)  : "-";
-            document.getElementById('fld_ch4avrg' ).innerHTML = data.ch4avrg  ? (data.ch4sum + "&nbsp;/&nbsp;" + data.ch4num + "&nbsp;=&nbsp;" + data.ch4avrg)  : "-";
+            str1 = ["-", "-", "-", "-"];
+            str2 = ["-", "-", "-", "-"];
+            str3 = ["-", "-", "-", "-"];
+
+            str1[0] = data.ch1avrg  ? data.ch1avrg  : "-";
+            str2[0] = data.ch1avrgv ? data.ch1avrgv : "-";
+            str3[0] = data.ch1avrgp ? data.ch1avrgp : "-";
+
+            str1[1] = data.ch2avrg  ? data.ch2avrg  : "-";
+            str2[1] = data.ch2avrgv ? data.ch2avrgv : "-";
+            str3[1] = data.ch2avrgp ? data.ch2avrgp : "-";
+
+            str1[2] = data.ch3avrg  ? data.ch3avrg  : "-";
+            str2[2] = data.ch3avrgv ? data.ch3avrgv : "-";
+            str3[2] = data.ch3avrgp ? data.ch3avrgp : "-";
+
+            str1[3] = data.ch4avrg  ? data.ch4avrg  : "-";
+            str2[3] = data.ch4avrgv ? data.ch4avrgv : "-";
+            str3[3] = data.ch4avrgp ? data.ch4avrgp : "-";
+
+            const ln1 = Math.max(...str1.map(str => str.length)); 
+
+            str1 = str1.map(str => {
+              return str.padStart(ln1, '\u00A0');
+            });
+
+            const ln2 = Math.max(...str2.map(str => str.length)); 
+            str2 = str2.map(str => {
+              return str.padStart(ln2, '\u00A0');
+            });
+
+            const ln3 = Math.max(...str3.map(str => str.length)); 
+            str3 = str3.map(str => {
+              return str.padStart(ln3, '\u00A0');
+            });
+
+            document.getElementById('fld_ch1avrgv' ).innerHTML = str1[0] + " &nbsp; " + str2[0] + "&nbsp; " + str3[0];
+            document.getElementById('fld_ch2avrgv' ).innerHTML = str1[1] + " &nbsp; " + str2[1] + "&nbsp; " + str3[1];
+            document.getElementById('fld_ch3avrgv' ).innerHTML = str1[2] + " &nbsp; " + str2[2] + "&nbsp; " + str3[2];
+            document.getElementById('fld_ch4avrgv' ).innerHTML = str1[3] + " &nbsp; " + str2[3] + "&nbsp; " + str3[3];
 
             document.getElementById('fld_sentok'  ).innerHTML = data.sentok   ? data.sentok   : "-";
             document.getElementById('fld_senterr' ).innerHTML = data.senter   ? data.senter   : "-";
+            document.getElementById('fld_witsok'  ).innerHTML = data.witsok   ? data.witsok   : "-";
+            document.getElementById('fld_witserr' ).innerHTML = data.witser   ? data.witser   : "-";
             document.getElementById('fld_dptdelay').innerHTML = data.dptdelay ? data.dptdelay : "-";
             document.getElementById('fld_swapch12').innerHTML = data.swapch12 ? data.swapch12 : "-";
         })
@@ -303,12 +343,14 @@ function loadTelemetry()
             document.getElementById('fld_uptime2' ).innerHTML = "-";
             document.getElementById('fld_enc1'    ).innerHTML = "-";
             document.getElementById('fld_enc2'    ).innerHTML = "-";
-            document.getElementById('fld_ch1avrg' ).innerHTML = "-";
-            document.getElementById('fld_ch2avrg' ).innerHTML = "-";
-            document.getElementById('fld_ch3avrg' ).innerHTML = "-";
-            document.getElementById('fld_ch4avrg' ).innerHTML = "-";
+            document.getElementById('fld_ch1avrgv').innerHTML = "-";
+            document.getElementById('fld_ch2avrgv').innerHTML = "-";
+            document.getElementById('fld_ch3avrgv').innerHTML = "-";
+            document.getElementById('fld_ch4avrgv').innerHTML = "-";
             document.getElementById('fld_sentok'  ).innerHTML = "-";
             document.getElementById('fld_senterr' ).innerHTML = "-";
+            document.getElementById('fld_witsok'  ).innerHTML = "-";
+            document.getElementById('fld_witserr' ).innerHTML = "-";
             document.getElementById('fld_dptdelay').innerHTML = "-";
             document.getElementById('fld_swapch12').innerHTML = "-";
             msg = "Ошибка: нет ответа";
@@ -327,7 +369,7 @@ function loadProtocol()
             return response.json();
         })
         .then(data => {
-            document.getElementById('log_file_lines').innerText = "Последние " + data.lines + " строк(и)";
+            document.getElementById('log_file_lines').innerText = data.lines;
             document.getElementById('log_file_content').innerText = data.content;
         })
         .catch(err => {
@@ -345,9 +387,11 @@ function loadAndParseConfigToInputs()
             const lines = data.split('\n');
 
             /* Массив всех возможных полей для обнуления (включая SIU параметры) */
-            const fields = ['host1','port11','port12','host2','port21','port22','host3','port31','port32','proto_ver',
-                            'ads_cmd_port','ads_data_port','ss_cmd_port','ss_dats_port','dtr_cmd_port',
-                            'dtr_data_port','wits_port','SystemUnits','Decimal'];
+            const fields = ['host1','port11','port12','host2','port21','port22',
+                            'host3','port31','port32','wits_port','proto_ver',
+                            'ads_cmd_port','ads_data_port','ss_cmd_port',
+                            'ss_dats_port','dtr_cmd_port',
+                            'dtr_data_port','SystemUnits','Decimal'];
             fields.forEach(f => { document.getElementById('input_'+f).value = ''; });
 
             lines.forEach(line => {
@@ -357,18 +401,6 @@ function loadAndParseConfigToInputs()
                 let kv = clean.split('=');
                 let key = kv[0].trim();
                 let val = kv[1].split('#')[0].trim(); 
-
-                // if (key === 'channels') {
-                //   let formName = 'configFormAtlas';
-                //   if (currentMode === "SIU") {
-                //       formName = 'configFormSIU';
-                //   }
-                //   const form = document.getElementById(formName);
-                //   let input = form.elements[key];
-                //   if (input) input.value = val;
-                //   return;
-                // }
-
                 let input = document.getElementById('input_' + key);
                 if (input) input.value = val;
 
@@ -435,6 +467,179 @@ function saveConfig(event)
       }
     });
 }
+
+function loadADCConfig()
+{
+    fetch('?api_get_adc_config')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error("Системная ошибка\n\n500 Internal Server Error\n\n" + response.status);
+            }
+            return response.json();
+        })
+        .then(data => {
+            document.getElementById('input_ref').value = data.ref || '—';
+            document.getElementById('adc_scale').innerText = data.scale || '—';
+        })
+        .catch(err => {
+            msg = "Ошибка: нет ответа";
+            console.error("AJAX: " + msg + ": ", err);
+            message(msg + "\n[" + err.message + "]", "error", 15000);
+        })
+}
+
+function saveADCConfig(event)
+{
+    event.preventDefault();
+
+    const form = document.getElementById('configADC');
+    if (!form) return;
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    /* Блокируется кнопка и запускается спиннер */
+    let originalBtnHtml = "";
+    if (submitBtn) {
+        const currentWidth = submitBtn.getBoundingClientRect().width;
+        submitBtn.style.width = currentWidth + 'px';
+        originalBtnHtml = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner"></span>Сохранение...';
+        submitBtn.style.opacity = "0.74";
+    }
+
+    const formData = new URLSearchParams(new FormData(form));
+
+    fetch('?api_save_adc_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+    })
+    .then(response => response.text())
+    .then(result => {
+      const status = result.trim();
+      if (status === 'SUCCESS') {
+          message("Конфигурация успешно сохранена", "info");
+          loadADCConfig();
+      } else if (status === 'ERR_500') {
+          message("Системная ошибка\n\n500 Internal Server Error\n[" + status + "]", "error");
+      } else {
+          message("Не удалось сохранить конфигурацию\n[" + status + "]", "error");
+      }
+    })
+    .catch(err => {
+        msg = "Ошибка: нет ответа";
+        console.error("AJAX: " + msg + ": ", err);
+        message(msg + "\n[" + err.message + "]", "error", 15000);
+    })
+    .finally(() => {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHtml ? originalBtnHtml : "Сохранить изменения";
+        submitBtn.style.opacity = "1";
+        submitBtn.style.width = '';
+      }
+    });
+}
+
+function loadWitsConfig()
+{
+    fetch('?api_get_wits_config')
+        .then(response => response.text())
+        .then(data => {
+            const lines = data.split('\n');
+
+            /* Массив всех возможных полей для обнуления */
+            const fields = ['wits_wellid', 'wits_recid', 'ps1_code', 'ps2_code',
+                            'hkld_code', 'enc1_code',  'enc2_code'];
+            fields.forEach(f => { document.getElementById('input_'+f).value = ''; });
+
+            lines.forEach(line => {
+                let clean = line.trim();
+                if (clean.startsWith('#') || !clean.includes('=')) return;
+
+                let kv = clean.split('=');
+                let key = kv[0].trim();
+                let val = kv[1].split('#')[0].trim(); 
+                switch (key) {
+                    case 'rec01':     key='wits_wellid'; break;
+                    case 'rec03':     key='wits_recid';  break;
+                    case 'pressure1': key='ps1_code';    break;
+                    case 'pressure2': key='ps2_code';    break;
+                    case 'hookload':  key='hkld_code';   break;
+                    case 'encoder1':  key='enc1_code';   break;
+                    case 'encoder2':  key='enc2_code';   break;
+                    default:
+                        console.warn("Unknown key: ", key);
+                        key='a5ebaca';
+                        break;
+                }
+                let input = document.getElementById('input_' + key);
+                if (input) input.value = val;
+            });
+        })
+        .catch(err => {
+            msg = "Ошибка: нет ответа";
+            console.error("AJAX: " + msg + ": ", err);
+            message(msg + "\n[" + err.message + "]", "error", 15000);
+        })
+}
+
+
+function saveWitsConfig(event)
+{
+    event.preventDefault();
+
+    const form = document.getElementById('configWits');
+    if (!form) return;
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    /* Блокируется кнопка и запускается спиннер */
+    let originalBtnHtml = "";
+    if (submitBtn) {
+        const currentWidth = submitBtn.getBoundingClientRect().width;
+        submitBtn.style.width = currentWidth + 'px';
+        originalBtnHtml = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner"></span>Сохранение...';
+        submitBtn.style.opacity = "0.74";
+    }
+
+    const formData = new URLSearchParams(new FormData(form));
+
+    fetch('?api_save_wits_config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData.toString()
+    })
+    .then(response => response.text())
+    .then(result => {
+      const status = result.trim();
+      if (status === 'SUCCESS') {
+          message("Конфигурация успешно сохранена", "info");
+          loadWitsConfig();
+      } else if (status === 'ERR_500') {
+          message("Системная ошибка\n\n500 Internal Server Error\n[" + status + "]", "error");
+      } else {
+          message("Не удалось сохранить конфигурацию\n[" + status + "]", "error");
+      }
+    })
+    .catch(err => {
+        msg = "Ошибка: нет ответа";
+        console.error("AJAX: " + msg + ": ", err);
+        message(msg + "\n[" + err.message + "]", "error", 15000);
+    })
+    .finally(() => {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHtml ? originalBtnHtml : "Сохранить изменения";
+        submitBtn.style.opacity = "1";
+        submitBtn.style.width = '';
+      }
+    });
+}
+
 
 // Переключение режимов Просмотр / Редактирование
 async function toggleSetupMode(mode)
@@ -553,21 +758,6 @@ function syncTime(button)
 // Функция обновления времени браузера
 function updateBrowserClock()
 {
-    const el = document.getElementById('system_date');
-    if (!el) return;
-
-    /*
-    // const now = new Date();
-    // const parts = now.toString().split(' ');
-    // const dayName   = parts[0]; // Mon
-    // const monthName = parts[1]; // Jul
-    // const dayNum    = parts[2]; // 27
-    // const year      = parts[3]; // 2026
-    // const timeStr   = parts[4]; // 13:19:34
-    // // Формат: Mon Jul 27 13:19:34 2026
-    // el.innerHTML = `${dayName} ${monthName} ${dayNum} ${timeStr} ${year}`;
-    */
-
     const now = new Date();
     const dayNameRaw   = new Intl.DateTimeFormat('ru-RU', { weekday: 'long' }).format(now);
     const monthNameRaw = new Intl.DateTimeFormat('ru-RU', { month: 'short' }).format(now);
@@ -582,9 +772,7 @@ function updateBrowserClock()
     const dayName   = (dayNameRaw.charAt(0).toUpperCase() + dayNameRaw.slice(1)).replace('.', '');
     const monthName = (monthNameRaw.charAt(0).toUpperCase() + monthNameRaw.slice(1)).replace('.', '');
     /* Формат: Mon Jul 27 13:19:34 2026 */
-    /* el.innerText = `${dayName} ${monthName} ${dayNum} ${timeStr} ${year}`;
-    */
-    el.innerHTML = `${dayName}, ${dayNum} ${monthName} ${year} &nbsp; ${timeStr}`;
+    document.getElementById('lbl_date').innerHTML = `${dayName}, ${dayNum} ${monthName} ${year} &nbsp; ${timeStr}`;
 }
 
 function fileSelectionCancel(input, text)
@@ -611,7 +799,7 @@ async function update_procedure(mode) {
     console.log(btn.innerText);
     try {
         btn.innerText = 'Проверка системы...';
-        const statusResponse = await fetch('?action=check_app_status');
+        const statusResponse = await fetch('?api_app_status');
         const appStatus = await statusResponse.text();
         if (appStatus.trim() === "RUNNING") {
             message("Необходимо остановить систему перед обновлением прошивки", "error");
@@ -840,7 +1028,7 @@ function message(text, type = 'info', timeout = 5000, style = '')
 window.onload = function()
 {
     document.getElementById('title').innerText = MODE_TITLE;
-    document.getElementById('mode_title').innerText = MODE_TITLE;
+    document.getElementById('lbl_mode').innerText = MODE_TITLE;
     document.getElementById('title_wcp_ver').innerText = WCPVER_TITLE;
     //document.getElementById('status_content').innerText = STATUSFNAME;
 
